@@ -1,5 +1,6 @@
-// Kanban board of the Tasks page: one column per "whose turn is it"
-// (docs/TASKS-V2.md). No drag & drop on purpose — transitions are gated
+// Kanban board of the Tasks page, left to right as a task flows: Ideen
+// (parked ones folded below) → Zur Freigabe → In Arbeit → Wartet auf dich →
+// Erledigt (docs/TASKS-V2.md). No drag & drop on purpose — transitions are gated
 // (start only via approval, agents can't), so each card offers the one
 // action that fits its state instead.
 import { useMemo, useState } from 'react'
@@ -8,20 +9,21 @@ import { AlertTriangle, Check, CircleHelp, Loader2, MessageSquare, Pause, Rocket
 import type { BoardTask, TaskPrio } from '../../api/client'
 import { shortRepo, taskPhase } from './shared'
 
-export type Lane = 'wartet' | 'freigabe' | 'arbeit' | 'erledigt' | 'idee'
+export type Lane = 'idee' | 'freigabe' | 'arbeit' | 'wartet' | 'erledigt'
 
 export const LANES: { id: Lane; label: string; short: string; hint: string }[] = [
-  { id: 'wartet', label: 'Wartet auf dich', short: 'Dich', hint: 'Frage, Freigabe oder Fehler — du bist dran' },
+  { id: 'idee', label: 'Ideen', short: 'Ideen', hint: 'Backlog: der Lead wählt daraus aus; Geparkte darunter' },
   { id: 'freigabe', label: 'Zur Freigabe', short: 'Freigabe', hint: 'Lead empfiehlt den Start — besprechen und freigeben' },
   { id: 'arbeit', label: 'In Arbeit', short: 'Arbeit', hint: 'Agenten arbeiten, nichts zu tun' },
+  { id: 'wartet', label: 'Wartet auf dich', short: 'Wartet', hint: 'Frage, Freigabe oder Fehler — du bist dran' },
   { id: 'erledigt', label: 'Erledigt', short: 'Erledigt', hint: 'Fertig in den letzten 7 Tagen' },
-  { id: 'idee', label: 'Ideen', short: 'Ideen', hint: 'Noch nicht empfohlen — der Lead wählt daraus aus' },
 ]
+
+const isParked = (t: BoardTask) => t.status === 'backlog'
 
 export function laneOf(t: BoardTask): Lane {
   const p = taskPhase(t)
-  if (p === 'ausarbeitung') return 'idee'
-  if (p === 'geparkt' || p === 'geschlossen') return 'idee' // not on the board; defensive
+  if (p === 'ausarbeitung' || p === 'geparkt' || p === 'geschlossen') return 'idee'
   return p as Lane
 }
 
@@ -123,8 +125,9 @@ function Card({ t, selected, onSelect, action }: {
   )
 }
 
-export default function Board({ tasks, selectedId, onSelect, chatFor, leadChannel }: {
+export default function Board({ tasks, selectedId, onSelect, chatFor, leadChannel, onAllDone }: {
   tasks: BoardTask[]
+  onAllDone: () => void                       // "alle Erledigten" → the full list
   selectedId: number | null
   onSelect: (t: BoardTask) => void
   chatFor: (t: BoardTask) => string | null    // task chat channel id, if the task has one
@@ -132,11 +135,14 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
 }) {
   const byLane = useMemo(() => {
     const m: Record<Lane, BoardTask[]> = { wartet: [], freigabe: [], arbeit: [], erledigt: [], idee: [] }
-    for (const t of tasks) m[laneOf(t)].push(t)
+    const parked: BoardTask[] = []
+    for (const t of tasks) (isParked(t) ? parked : m[laneOf(t)]).push(t)
     m.erledigt.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-    return m
+    return { ...m, parked }
   }, [tasks])
-  const firstBusy = LANES.find((l) => l.id !== 'idee' && byLane[l.id].length > 0)?.id ?? 'idee'
+  const count = (id: Lane) => byLane[id].length
+  // Phones open where something needs me, else where things move.
+  const firstBusy: Lane = (['wartet', 'freigabe', 'arbeit'] as Lane[]).find((id) => count(id) > 0) ?? 'idee'
   const [lane, setLane] = useState<Lane | null>(null) // phones: one lane at a time
   const shown = lane ?? firstBusy
   const [open, setOpen] = useState<Partial<Record<Lane, boolean>>>({})
@@ -172,6 +178,21 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
           <button onClick={() => setOpen((o) => ({ ...o, [id]: false }))} className="py-1 text-xs text-slate-500 hover:text-slate-300">weniger zeigen</button>
         )}
         {byLane[id].length === 0 && <div className="py-3 text-center text-xs text-slate-600">—</div>}
+        {id === 'idee' && byLane.parked.length > 0 && (
+          <details className="mt-1 rounded border border-slate-700/70 p-1.5 [&_summary]:list-none">
+            <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200" title="Soll später noch gemacht werden">
+              ▸ Geparkt ({byLane.parked.length})
+            </summary>
+            <div className="mt-2 flex flex-col gap-2 opacity-80">
+              {byLane.parked.map((t) => (
+                <Card key={t.id} t={t} selected={selectedId === t.id} onSelect={() => onSelect(t)} action={null} />
+              ))}
+            </div>
+          </details>
+        )}
+        {id === 'erledigt' && (
+          <button onClick={onAllDone} className="py-1 text-xs text-slate-500 hover:text-slate-300">alle Erledigten →</button>
+        )}
       </div>
     )
   }
@@ -180,6 +201,7 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
     <div className="mb-2 flex items-baseline gap-2" title={l.hint}>
       <span className={`text-xs font-semibold uppercase tracking-wider ${l.id === 'wartet' && byLane.wartet.length ? 'text-violet-300' : 'text-slate-400'}`}>{l.label}</span>
       <span className="text-xs text-slate-500">{byLane[l.id].length}</span>
+      {l.id === 'idee' && byLane.parked.length > 0 && <span className="text-[10px] text-slate-600">+ {byLane.parked.length} geparkt</span>}
     </div>
   )
 

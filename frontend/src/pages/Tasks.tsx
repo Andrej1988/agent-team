@@ -84,7 +84,6 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
   const [view, setView] = useState<'board' | 'backlog' | 'done' | 'closed'>('board')
   const [leadChannel, setLeadChannel] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [backlogCount, setBacklogCount] = useState(0)
   const [doneCount, setDoneCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -141,14 +140,11 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
         setTasks(b.tasks)
         setLeadChannel(b.lead_channel)
         api.chat.channels().then((l) => setChatIds(new Set(l.filter((c) => c.task_id != null).map((c) => c.id))), () => {})
-        setBacklogCount(b.counts.backlog ?? 0)
         setDoneCount(b.counts.done ?? 0)
       } else {
         const list = await api.tasks.list(view)
         setTasks(list)
         // Keep the tab badges fresh: the loaded list for this tab, the other lazily.
-        if (view === 'backlog') setBacklogCount(list.length)
-        else api.tasks.list('backlog').then((b) => setBacklogCount(b.length)).catch(() => {})
         if (view === 'done') setDoneCount(list.length)
         else api.tasks.list('done').then((d) => setDoneCount(d.length)).catch(() => {})
       }
@@ -230,7 +226,6 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
       api.tasks.board().then(
         (b) => {
           setTasks(b.tasks)
-          setBacklogCount(b.counts.backlog ?? 0)
           setDoneCount(b.counts.done ?? 0)
         },
         () => { /* swallow; next tick retries */ },
@@ -708,16 +703,6 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
               Board
             </button>
             <button
-              onClick={() => { if (view !== 'backlog' && confirmDiscardIfDirty()) { setDraft(null); setView('backlog') } }}
-              className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'backlog' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-            >
-              <Archive size={12} />
-              Geparkt
-              {backlogCount > 0 && (
-                <span className="rounded-full bg-indigo-900/60 px-1.5 text-[10px] text-indigo-300">{backlogCount}</span>
-              )}
-            </button>
-            <button
               onClick={() => { if (view !== 'done' && confirmDiscardIfDirty()) { setDraft(null); setView('done') } }}
               className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'done' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
@@ -762,6 +747,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
             onSelect={selectTask}
             chatFor={(t) => (chatIds.has(`task-${currentProject()}-${t.id}`) ? `task-${currentProject()}-${t.id}` : null)}
             leadChannel={leadChannel}
+            onAllDone={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('done') } }}
           />
         ) : (
         <div className="overflow-y-auto rounded-lg border border-slate-700 bg-slate-800">
@@ -770,7 +756,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
           ) : tasks.length === 0 ? (
             <div className="p-4 text-sm text-slate-500">
               {view === 'backlog' ? (
-                <>Backlog is empty. Park a task here with <strong>Backlog</strong> to set it aside without losing it.</>
+                <>Nichts geparkt.</>
               ) : view === 'done' ? (
                 <>No completed tasks yet. Finished tasks (<strong>Done</strong>) collect here.</>
               ) : view === 'closed' ? (

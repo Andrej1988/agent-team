@@ -419,10 +419,10 @@ def list_tasks(status: Optional[str] = None):
 
 @router.get("/board")
 def task_board(done_days: int = 7):
-    """Kanban board: the open tasks plus those done in the last ``done_days``
-    days, each with its stage progress and (done) whether the branch still
+    """Kanban board: the open and parked tasks plus those done in the last
+    ``done_days`` days, each with its stage progress and (done) whether the branch still
     waits for "Übernehmen"; counts for the folded-away statuses."""
-    rows = tasks_db.list_tasks() + tasks_db.recent_done(min(max(done_days, 0), 90))
+    rows = tasks_db.list_tasks() + tasks_db.list_tasks("backlog") + tasks_db.recent_done(min(max(done_days, 0), 90))
     progress = tasks_db.stage_progress([t["id"] for t in rows])
     confirm = agent_roles.CONFIRM_ROLES
     for t in rows:
