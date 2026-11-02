@@ -16,7 +16,7 @@ import os
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Optional
 from zoneinfo import ZoneInfo
@@ -299,6 +299,58 @@ def list_tasks(status: Optional[str] = None) -> list[dict]:
     sql += " ORDER BY (status IN ('done','failed')) ASC, prio ASC, updated_at DESC"
     with _connect() as cx:
         return [_row_to_dict(r) for r in cx.execute(sql, args).fetchall()]
+
+
+def recent_done(days: int) -> list[dict]:
+    """Done tasks touched in the last ``days`` days, newest first (board column)."""
+    cutoff = datetime.now(BERLIN) - timedelta(days=max(0, days))
+    with _connect() as cx:
+        rows = cx.execute("SELECT * FROM tasks WHERE status = 'done' ORDER BY updated_at DESC").fetchall()
+    out = []
+    for r in rows:
+        try:
+            ts = datetime.fromisoformat(r["updated_at"])
+        except (TypeError, ValueError):
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=BERLIN)
+        if ts >= cutoff:
+            out.append(_row_to_dict(r))
+    return out
+
+
+def status_counts() -> dict[str, int]:
+    with _connect() as cx:
+        return {r[0]: r[1] for r in cx.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")}
+
+
+def stage_progress(task_ids: list[int]) -> dict[int, dict]:
+    """Per task: stages done / total (skipped not counted) and the current
+    stage — the one running, waiting or failed, else the next pending one."""
+    if not task_ids:
+        return {}
+    marks = ",".join("?" * len(task_ids))
+    with _connect() as cx:
+        rows = cx.execute(
+            f"SELECT task_id, seq, role, status FROM task_stages WHERE task_id IN ({marks}) "
+            "ORDER BY task_id, seq", tuple(task_ids)).fetchall()
+    by: dict[int, list] = {}
+    for r in rows:
+        by.setdefault(r["task_id"], []).append(r)
+    out = {}
+    for tid, stages in by.items():
+        live = [s for s in stages if s["status"] != "skipped"]
+        if not live:
+            continue
+        cur = (next((s for s in live if s["status"] in ("running", "awaiting_input", "failed")), None)
+               or next((s for s in live if s["status"] == "pending"), None))
+        out[tid] = {
+            "done": sum(1 for s in live if s["status"] == "done"),
+            "total": len(live),
+            "current": None if cur is None else {
+                "seq": cur["seq"], "index": live.index(cur) + 1, "role": cur["role"], "status": cur["status"]},
+        }
+    return out
 
 
 def get_task(task_id: int) -> Optional[dict]:

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Archive, ArchiveRestore, ArrowLeft, Ban, Check, GitBranch, MessageSquare, Plus, Play, RotateCcw, Save, Send, Trash2, X } from 'lucide-react'
-import { api, currentProject, type ModelCatalog, type TaskChanges, type RolesResponse, type Task, type TaskCost, type TaskPrio, type TaskStage, type WorkerDefaults } from '../api/client'
+import { Archive, ArchiveRestore, ArrowLeft, Ban, Check, Columns3, GitBranch, MessageSquare, Plus, Play, RotateCcw, Save, Send, Trash2, X } from 'lucide-react'
+import { api, currentProject, type BoardTask, type ModelCatalog, type TaskChanges, type RolesResponse, type Task, type TaskCost, type TaskPrio, type TaskStage, type WorkerDefaults } from '../api/client'
 import { CatalogHint, ModelCatalogProvider, ModelPicker, StatusBadge, setRepoPrefix, shortRepo, type StreamEvent } from '../components/tasks/shared'
 import PipelinePanel from '../components/tasks/PipelinePanel'
+import Board from '../components/tasks/Board'
 import ClaudeLoginNotice from '../components/tasks/ClaudeLoginNotice'
 import TaskAttentionNotice, { AttentionCard } from '../components/tasks/TaskAttentionNotice'
 import { errorHelp } from '../components/tasks/taskHelp'
@@ -78,8 +79,10 @@ function matchesQuery(t: Task, q: string): boolean {
 
 
 export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}) {
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [view, setView] = useState<'active' | 'backlog' | 'done' | 'closed'>('active')
+  const [tasks, setTasks] = useState<BoardTask[]>([])
+  // 'board' = Kanban of open + recently done tasks; the others list one status.
+  const [view, setView] = useState<'board' | 'backlog' | 'done' | 'closed'>('board')
+  const [leadChannel, setLeadChannel] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [backlogCount, setBacklogCount] = useState(0)
   const [doneCount, setDoneCount] = useState(0)
@@ -133,15 +136,22 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
 
   const load = async () => {
     try {
-      // 'active' → default list (excludes backlog, done, closed); other tabs filter by status.
-      const list = await api.tasks.list(view === 'active' ? undefined : view)
-      setTasks(list)
-      // Keep each tab's count badge fresh: use the loaded list for the current
-      // tab, fetch the other terminal tabs' counts lazily.
-      if (view === 'backlog') setBacklogCount(list.length)
-      else api.tasks.list('backlog').then((b) => setBacklogCount(b.length)).catch(() => {})
-      if (view === 'done') setDoneCount(list.length)
-      else api.tasks.list('done').then((d) => setDoneCount(d.length)).catch(() => {})
+      if (view === 'board') {
+        const b = await api.tasks.board()
+        setTasks(b.tasks)
+        setLeadChannel(b.lead_channel)
+        api.chat.channels().then((l) => setChatIds(new Set(l.filter((c) => c.task_id != null).map((c) => c.id))), () => {})
+        setBacklogCount(b.counts.backlog ?? 0)
+        setDoneCount(b.counts.done ?? 0)
+      } else {
+        const list = await api.tasks.list(view)
+        setTasks(list)
+        // Keep the tab badges fresh: the loaded list for this tab, the other lazily.
+        if (view === 'backlog') setBacklogCount(list.length)
+        else api.tasks.list('backlog').then((b) => setBacklogCount(b.length)).catch(() => {})
+        if (view === 'done') setDoneCount(list.length)
+        else api.tasks.list('done').then((d) => setDoneCount(d.length)).catch(() => {})
+      }
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -210,17 +220,24 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
   // the detail stream is closed or the run was kicked off elsewhere.
   // Idle when nothing is in flight, so it costs nothing at rest. Updates the
   // list only — never the draft — so unsaved edits are never clobbered.
-  const anyInFlight = view === 'active' && tasks.some((t) => BUSY_STATUS.has(t.status))
+  // The board also refreshes slowly at rest: lead runs, scouts and stage
+  // results change it without the page doing anything.
+  const anyInFlight = view === 'board' && tasks.some((t) => BUSY_STATUS.has(t.status))
   useEffect(() => {
-    if (!anyInFlight) return
+    if (view !== 'board') return
     const id = window.setInterval(() => {
-      api.tasks.list().then(
-        (fresh) => setTasks(fresh),
+      if (document.hidden) return
+      api.tasks.board().then(
+        (b) => {
+          setTasks(b.tasks)
+          setBacklogCount(b.counts.backlog ?? 0)
+          setDoneCount(b.counts.done ?? 0)
+        },
         () => { /* swallow; next tick retries */ },
       )
-    }, 3000)
+    }, anyInFlight ? 3000 : 20000)
     return () => window.clearInterval(id)
-  }, [anyInFlight])
+  }, [anyInFlight, view])
 
   const closeStream = () => {
     esRef.current?.close()
@@ -274,7 +291,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
   const refreshDraft = async (taskId: number) => {
     try {
       const fresh = await api.tasks.get(taskId)
-      setTasks((prev) => prev.map((t) => (t.id === fresh.id ? fresh : t)))
+      setTasks((prev) => prev.map((t) => (t.id === fresh.id ? { ...fresh, board: t.board } : t)))
       setDraft((d) => (d && d.id === fresh.id ? toDraft(fresh) : d))
       if (fresh.mode === 'pipeline') api.tasks.stages(fresh.id).then(setStages, () => {})
       if (!BUSY_STATUS.has(fresh.status) && pollRef.current !== null) {
@@ -399,6 +416,14 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
     closeStream()
     setDraft(null)
   }
+
+  // Escape closes the detail panel (asks first if there are unsaved edits).
+  useEffect(() => {
+    if (!draft) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeDraft() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   // Phones show list or detail, not both stacked: opening a task starts at the top.
   const draftKey = draft ? draft.id ?? 'new' : null
@@ -564,7 +589,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
     try {
       await api.tasks.restore(selected.id)
       // Task leaves the backlog list — drop selection and refresh so it
-      // reappears under the Active tab.
+      // reappears on the board.
       closeStream()
       setDraft(null)
       await load()
@@ -669,24 +694,25 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
 
   return (
     <ModelCatalogProvider catalog={modelCatalog}>
-    <div className="flex h-full flex-col p-3 sm:p-6">
+    <div className="flex flex-col p-1 sm:p-2 lg:h-[calc(100dvh-var(--header-h,49px)-2rem)]">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="hidden text-lg font-semibold text-white sm:block">Tasks</h1>
           <div className="flex min-w-0 overflow-x-auto whitespace-nowrap rounded-md border border-slate-700 bg-slate-800 p-0.5 text-xs">
             <button
-              onClick={() => { if (view !== 'active' && confirmDiscardIfDirty()) { setDraft(null); setView('active') } }}
-              className={`rounded px-2.5 py-1 ${view === 'active' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              onClick={() => { if (view !== 'board' && confirmDiscardIfDirty()) { setDraft(null); setView('board') } }}
+              className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'board' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
-              Active
+              <Columns3 size={12} />
+              Board
             </button>
             <button
               onClick={() => { if (view !== 'backlog' && confirmDiscardIfDirty()) { setDraft(null); setView('backlog') } }}
               className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'backlog' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <Archive size={12} />
-              Backlog
+              Geparkt
               {backlogCount > 0 && (
                 <span className="rounded-full bg-indigo-900/60 px-1.5 text-[10px] text-indigo-300">{backlogCount}</span>
               )}
@@ -696,7 +722,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
               className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'done' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <Check size={12} />
-              Done
+              Erledigt
               {doneCount > 0 && (
                 <span className="rounded-full bg-green-900/60 px-1.5 text-[10px] text-green-300">{doneCount}</span>
               )}
@@ -728,9 +754,17 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
         </div>
       )}
 
-      <div className="grid flex-1 min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        {/* List (hidden on phones while a task is open) */}
-        <div className={`overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 ${draft ? 'hidden lg:block' : ''}`}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {view === 'board' && !loading && !error ? (
+          <Board
+            tasks={tasks}
+            selectedId={draft?.id ?? null}
+            onSelect={selectTask}
+            chatFor={(t) => (chatIds.has(`task-${currentProject()}-${t.id}`) ? `task-${currentProject()}-${t.id}` : null)}
+            leadChannel={leadChannel}
+          />
+        ) : (
+        <div className="overflow-y-auto rounded-lg border border-slate-700 bg-slate-800">
           {loading ? (
             <div className="p-4 text-sm text-slate-500">Loading…</div>
           ) : tasks.length === 0 ? (
@@ -780,18 +814,21 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
             </>
           )}
         </div>
+        )}
+      </div>
 
-        {/* Detail / Editor (hidden on phones until a task is open) */}
-        <div className={`overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 p-4 ${draft ? '' : 'hidden lg:block'}`}>
-          {!draft ? (
-            <div className="text-sm text-slate-500">
-              Select a task on the left or create a new one.
-            </div>
-          ) : (
+      {/* Detail / Editor: a panel over the board (full screen on phones) */}
+      {draft && (
+      <div className="fixed inset-0 z-30 flex justify-end bg-black/50" onClick={closeDraft}>
+        <div
+          className="h-full w-full overflow-y-auto border-l border-slate-700 bg-slate-800 p-4 pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl lg:w-[min(820px,64vw)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <button onClick={closeDraft} className="-m-1.5 p-1.5 text-slate-400 hover:text-white lg:hidden" aria-label="Zurück zur Liste">
+                  <button onClick={closeDraft} className="-m-1.5 p-1.5 text-slate-400 hover:text-white lg:hidden" aria-label="Zurück zum Board">
                     <ArrowLeft size={18} />
                   </button>
                   {isNew ? 'New Task' : `Task #${draft.id}`}
@@ -1230,6 +1267,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
           )}
         </div>
       </div>
+      )}
     </div>
     </ModelCatalogProvider>
   )

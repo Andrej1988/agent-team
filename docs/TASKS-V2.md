@@ -38,6 +38,15 @@ Sichtbare Zustände (sie sagen, wer dran ist):
 | Geparkt          | `backlog`: soll **später** noch gemacht werden    | —            |
 | Geschlossen      | `closed`: wird nicht gemacht (zusammengelegt, überholt, Duplikat, anderweitig gelöst). `lead_note` sagt warum, „Wieder öffnen“ ist möglich | — |
 
+Die Tasks-Seite zeigt das als **Board** mit einer Spalte pro Zuständigkeit:
+Wartet auf dich, Zur Freigabe, In Arbeit, Erledigt (letzte 7 Tage), Ideen.
+Ideen und Erledigt sind auf 8 Karten eingeklappt. Jede Karte nennt den
+nächsten Schritt (z. B. „Frage offen · Stufe 3/5“, „nicht übernommen“) und
+bietet die passende Aktion als Link in den Task- bzw. Lead-Chat. Ziehen per
+Drag & Drop gibt es absichtlich nicht, denn die Übergänge sind geschützt.
+Geparkt, alle Erledigten und Geschlossen sind eigene Listen. Daten:
+`GET /p/<projekt>/api/tasks/board`.
+
 ## Lead-Kanal und Chat pro Task
 
 **Vor der Freigabe** wird im **Lead-Kanal des Projekts** (`<projekt>-lead`)

@@ -134,6 +134,7 @@ export const api = {
   tasks: {
     list: (status?: TaskStatus) =>
       get<Task[]>(status ? `${P()}/api/tasks?status=${status}` : `${P()}/api/tasks`),
+    board: (doneDays = 7) => get<TaskBoard>(`${P()}/api/tasks/board?done_days=${doneDays}`),
     get: (id: number) => get<Task>(`${P()}/api/tasks/${id}`),
     create: (body: TaskCreateBody) => send<Task>(`${P()}/api/tasks`, 'POST', body),
     update: (id: number, body: TaskUpdateBody) =>
@@ -401,6 +402,15 @@ export interface Task {
   proposed_at?: string | null
   lead_note?: string | null
 }
+
+// GET /api/tasks/board: open tasks + recently done, with stage progress.
+export interface BoardStage { seq: number; index: number; role: string; label: string; status: StageStatus; confirm: boolean }
+export interface TaskBoardInfo {
+  stages: { done: number; total: number; current: BoardStage | null } | null
+  pending_apply: boolean
+}
+export type BoardTask = Task & { board?: TaskBoardInfo }
+export interface TaskBoard { tasks: BoardTask[]; counts: Partial<Record<TaskStatus, number>>; lead_channel: string | null }
 
 // The task's own branch (worker/workspace.py); state null = ran in the live checkout.
 export interface TaskBranchRepo { base?: string; ahead?: number; behind?: number; stat?: string; dirty?: boolean; error?: string }

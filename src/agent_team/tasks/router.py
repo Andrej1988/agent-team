@@ -417,6 +417,27 @@ def list_tasks(status: Optional[str] = None):
     return tasks_db.list_tasks(status=status)
 
 
+@router.get("/board")
+def task_board(done_days: int = 7):
+    """Kanban board: the open tasks plus those done in the last ``done_days``
+    days, each with its stage progress and (done) whether the branch still
+    waits for "Übernehmen"; counts for the folded-away statuses."""
+    rows = tasks_db.list_tasks() + tasks_db.recent_done(min(max(done_days, 0), 90))
+    progress = tasks_db.stage_progress([t["id"] for t in rows])
+    confirm = agent_roles.CONFIRM_ROLES
+    for t in rows:
+        p = progress.get(t["id"])
+        cur = (p or {}).get("current")
+        if cur:
+            cur["label"] = mirror._role_label(cur["role"])
+            cur["confirm"] = cur["role"] in confirm
+        st = mirror.worktree_state(t["id"]) if t["status"] == "done" else None
+        t["board"] = {"stages": p, "pending_apply": bool(st and st.get("pending"))}
+    lead = projects.lead_channel(projects.current().id)
+    return {"tasks": rows, "counts": tasks_db.status_counts(),
+            "lead_channel": lead.id if lead else None}
+
+
 @router.post("", status_code=201)
 def create_task(body: TaskCreate):
     return tasks_db.create_task(

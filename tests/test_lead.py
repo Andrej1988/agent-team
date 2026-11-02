@@ -186,3 +186,33 @@ def test_apply_branch_is_the_users_tap(app_client, monkeypatch, demo_project):
     assert [b["data"] for row in card["buttons"] for b in row] == [f"apply:{tid}", f"archive:{tid}"]
     assert card["buttons"][0][0]["label"] == "In main übernehmen (mergen, ohne Deploy)"
     assert "task/" in card["text"] and "Committen" not in str(card["buttons"])
+
+
+def test_board_groups_open_and_recent_done(app_client, monkeypatch):
+    mod, c, _ = app_client
+    monkeypatch.setattr(mod, "_internal_client", lambda r: True)
+    new = db.create_task("Idee", "", 2, [])["id"]
+    run = db.create_task("Läuft", "", 1, [])["id"]
+    old = db.create_task("Alt erledigt", "", 2, [])["id"]
+    fresh = db.create_task("Neu erledigt", "", 2, [])["id"]
+    parked = db.create_task("Später", "", 3, [])["id"]
+    db.park_task(parked, "später")
+    with db._connect() as cx:
+        cx.execute("UPDATE tasks SET status='done' WHERE id IN (?, ?)", (old, fresh))
+        cx.execute("UPDATE tasks SET updated_at='2020-01-01T00:00:00+01:00' WHERE id=?", (old,))
+        cx.execute("UPDATE tasks SET status='running', mode='pipeline' WHERE id=?", (run,))
+        for seq, role, status in ((1, "implementation-engineer", "done"), (2, "reviewer", "skipped"),
+                                  (3, "test-engineer", "running"), (4, "reviewer", "pending")):
+            cx.execute("INSERT INTO task_stages (task_id, seq, role, kind, goal, status, created_at, updated_at) "
+                       "VALUES (?, ?, ?, 'implement', '', ?, '', '')", (run, seq, role, status))
+    r = c.get("/p/demo/api/tasks/board")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    ids = {t["id"]: t for t in b["tasks"]}
+    assert set(ids) == {new, run, fresh}
+    st = ids[run]["board"]["stages"]
+    assert (st["done"], st["total"]) == (1, 3)
+    assert st["current"]["index"] == 2 and st["current"]["status"] == "running" and st["current"]["label"]
+    assert ids[new]["board"]["stages"] is None and ids[fresh]["board"]["pending_apply"] is False
+    assert b["counts"]["backlog"] == 1 and b["counts"]["done"] == 2
+    assert b["lead_channel"] == "demo-lead"
