@@ -11,13 +11,13 @@ import type { AgentBackend, ModelCatalog, TaskStatus } from '../../api/client'
 export type TaskPhase = 'idee' | 'ausarbeitung' | 'freigabe' | 'arbeit' | 'wartet' | 'erledigt' | 'geparkt' | 'geschlossen'
 
 export const PHASE_LABEL: Record<TaskPhase, string> = {
-  idee: 'Idee',
+  idee: 'Todo',
   ausarbeitung: 'Wird ausgearbeitet',
   freigabe: 'Zur Freigabe',
   arbeit: 'In Arbeit',
   wartet: 'Wartet auf dich',
   erledigt: 'Erledigt',
-  geparkt: 'Geparkt',
+  geparkt: 'Backlog',
   geschlossen: 'Geschlossen',
 }
 

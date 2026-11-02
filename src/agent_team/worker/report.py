@@ -115,7 +115,7 @@ def facts(active: list[dict], done: list[dict], backlog: list[dict], costs: dict
 ## Wartet auf den User ({len(waiting)}), dazu {len(proposed)} Vorschläge zur Freigabe
 {chr(10).join(line(t) for t in waiting + proposed) or "(nichts)"}
 
-## Ideen: {len(ideas)} offen, {len(new_ideas)} neu diese Woche, {len(parked_w)} geparkt (später), {len(closed_w)} geschlossen (wird nicht gemacht)
+## Ideen: {len(ideas)} offen, {len(new_ideas)} neu diese Woche, {len(parked_w)} ins Backlog (später), {len(closed_w)} geschlossen (wird nicht gemacht)
 {chr(10).join(line(t) for t in new_ideas[:15]) or "(keine neuen)"}
 
 ## Commits diese Woche (Repo: Autor Anzahl)

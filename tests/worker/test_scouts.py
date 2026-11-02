@@ -176,7 +176,7 @@ def test_lead_run_proposes_and_parks_only_scout_tasks(tmp_path, monkeypatch):
     path, card = posts[3]
     assert path == "/api/notify/demo-lead" and card["title"].startswith("Aufräumen: #2")
     assert [b["data"] for row in card["buttons"] for b in row] == ["park:2", "close:2", "keep:2", "delete:2"]
-    assert card["buttons"][0][0]["label"] == "Parken – vielleicht später"
+    assert card["buttons"][0][0]["label"] == "Ins Backlog – vielleicht später"
     assert card["buttons"][-1][0]["label"] == "Endgültig löschen"
     assert "Recommend at most 3 new" in seen["prompt"] and "[new, prio 2, User] B" in seen["prompt"]
     title, text = notes[0]

@@ -85,6 +85,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
   const [leadChannel, setLeadChannel] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [doneCount, setDoneCount] = useState(0)
+  const [backlogCount, setBacklogCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [claudeAuthRequired, setClaudeAuthRequired] = useState(false)
@@ -141,12 +142,15 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
         setLeadChannel(b.lead_channel)
         api.chat.channels().then((l) => setChatIds(new Set(l.filter((c) => c.task_id != null).map((c) => c.id))), () => {})
         setDoneCount(b.counts.done ?? 0)
+        setBacklogCount(b.counts.backlog ?? 0)
       } else {
         const list = await api.tasks.list(view)
         setTasks(list)
         // Keep the tab badges fresh: the loaded list for this tab, the other lazily.
         if (view === 'done') setDoneCount(list.length)
         else api.tasks.list('done').then((d) => setDoneCount(d.length)).catch(() => {})
+        if (view === 'backlog') setBacklogCount(list.length)
+        else api.tasks.list('backlog').then((d) => setBacklogCount(d.length)).catch(() => {})
       }
       setError(null)
     } catch (e) {
@@ -227,6 +231,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
         (b) => {
           setTasks(b.tasks)
           setDoneCount(b.counts.done ?? 0)
+        setBacklogCount(b.counts.backlog ?? 0)
         },
         () => { /* swallow; next tick retries */ },
       )
@@ -703,6 +708,17 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
               Board
             </button>
             <button
+              onClick={() => { if (view !== 'backlog' && confirmDiscardIfDirty()) { setDraft(null); setView('backlog') } }}
+              title="Backlog — soll später noch gemacht werden"
+              className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'backlog' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              <Archive size={12} />
+              Backlog
+              {backlogCount > 0 && (
+                <span className="rounded-full bg-indigo-900/60 px-1.5 text-[10px] text-indigo-300">{backlogCount}</span>
+              )}
+            </button>
+            <button
               onClick={() => { if (view !== 'done' && confirmDiscardIfDirty()) { setDraft(null); setView('done') } }}
               className={`flex items-center gap-1 rounded px-2.5 py-1 ${view === 'done' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
@@ -744,12 +760,14 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
           <>
           <div className="mb-2 flex items-center gap-2">
             <input value={query} onChange={(e) => setQuery(e.target.value)} type="search" inputMode="search"
-              placeholder={`Suchen: #Nummer oder Stichwort (${tasks.length})`}
+              placeholder={`Suchen: #Nummer oder Stichwort (${tasks.filter((t) => t.status !== 'backlog').length})`}
               className="w-full max-w-md rounded border border-slate-600 bg-slate-900 px-2.5 py-1.5 text-sm text-slate-200 placeholder:text-slate-500" />
             {query.trim() && (
               <span className="shrink-0 text-xs text-slate-500">
-                {tasks.filter((t) => matchesQuery(t, query)).length} Treffer ·{' '}
-                <button onClick={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('done') } }} className="underline hover:text-slate-300">in allen Erledigten</button>
+                {tasks.filter((t) => t.status !== 'backlog' && matchesQuery(t, query)).length} Treffer · suchen in{' '}
+                <button onClick={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('backlog') } }} className="underline hover:text-slate-300">Backlog</button>
+                {' · '}
+                <button onClick={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('done') } }} className="underline hover:text-slate-300">allen Erledigten</button>
                 {' · '}
                 <button onClick={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('closed') } }} className="underline hover:text-slate-300">Geschlossenen</button>
               </span>
@@ -772,7 +790,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
           ) : tasks.length === 0 ? (
             <div className="p-4 text-sm text-slate-500">
               {view === 'backlog' ? (
-                <>Nichts geparkt.</>
+                <>Backlog ist leer. Hier landen Tasks, die später noch gemacht werden sollen.</>
               ) : view === 'done' ? (
                 <>No completed tasks yet. Finished tasks (<strong>Done</strong>) collect here.</>
               ) : view === 'closed' ? (
@@ -1163,7 +1181,7 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
               {selected?.lead_note && !streamOpen && (
                 <div className="mt-1 rounded border border-amber-800/60 bg-amber-900/10 p-3">
                   <div className="mb-1 text-[10px] uppercase tracking-wider text-amber-400">
-                    {selected.status === 'backlog' ? 'Geparkt (für später)'
+                    {selected.status === 'backlog' ? 'Im Backlog (für später)'
                       : selected.status === 'closed' ? 'Geschlossen — Grund'
                       : 'Empfehlung des Lead'}
                   </div>

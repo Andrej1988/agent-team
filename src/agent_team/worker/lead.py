@@ -358,11 +358,11 @@ async def run_lead(scout: dict, team_dir: Path, control: Path, label: str, cwd: 
     if ticked:
         lines.append("Als erledigt abgehakt:\n" + "\n".join(f"#{t['id']} {t['title']} — {why}" for t, why in ticked))
     if parked:
-        lines.append("Geparkt (für später):\n" + "\n".join(f"#{t['id']} {t['title']} — {why}" for t, why in parked))
+        lines.append("Ins Backlog (für später):\n" + "\n".join(f"#{t['id']} {t['title']} — {why}" for t, why in parked))
     for t, r in kept:
         # The user's own task: a card, the user decides.
         close = {"label": "Schließen – wird nicht gemacht", "data": f"close:{t['id']}"}
-        park = {"label": "Parken – vielleicht später", "data": f"park:{t['id']}"}
+        park = {"label": "Ins Backlog – vielleicht später", "data": f"park:{t['id']}"}
         if r["into"]:
             first = {"label": f"In #{r['into']} zusammenlegen", "data": f"merge:{t['id']}:{r['into']}"}
         elif r["done"]:
@@ -412,7 +412,7 @@ async def run_lead(scout: dict, team_dir: Path, control: Path, label: str, cwd: 
         lines.append("Nichts Neues zum Starten.")
     lines.append("Antworte hier, um die Vorschläge zu besprechen.")
     title = (f"Lead: {len(proposed)} zur Freigabe" + (f", {len(closed)} geschlossen" if closed else "")
-             + (f", {len(ticked)} abgehakt" if ticked else "") + (f", {len(parked)} geparkt" if parked else "")
+             + (f", {len(ticked)} abgehakt" if ticked else "") + (f", {len(parked)} ins Backlog" if parked else "")
              + (f", {len(created)} neue Folge-Ideen" if created else "")
              + (f", {len(fixes)} Watchdog-Fix" if fixes else ""))
     try:

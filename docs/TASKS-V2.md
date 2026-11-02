@@ -17,11 +17,11 @@ Grundsätze:
 ## Ablauf eines Tasks
 
 ```
- Idee ──(Ausarbeiten, optional)──▶ Zur Freigabe ──(User: Freigeben)──▶ In Arbeit ──▶ Erledigt
+ Todo ──(Ausarbeiten, optional)──▶ Zur Freigabe ──(User: Freigeben)──▶ In Arbeit ──▶ Erledigt
    ▲                                    │                                 │  ▲
    │ Scout / User / Lead legt an        │ Lead schlägt vor, User          ▼  │ Antwort / Klick
    │                                    │ bespricht im Lead-Chat     Wartet auf dich
-   └──── Geparkt (später) ◀─────────────┤ parken                      (Frage, Deploy-Freigabe, Fehler)
+   └──── Backlog (später) ◀─────────────┤ ins Backlog                  (Frage, Deploy-Freigabe, Fehler)
          Geschlossen        ◀─────────────┘ zusammenlegen / überholt
 ```
 
@@ -29,23 +29,23 @@ Sichtbare Zustände (sie sagen, wer dran ist):
 
 | Anzeige          | intern                                            | wer ist dran |
 |------------------|---------------------------------------------------|--------------|
-| Idee             | `new`                                             | Lead/User    |
+| Todo             | `new`                                             | Lead/User    |
 | Wird ausgearbeitet | `refining`                                      | Agent        |
 | Zur Freigabe     | `refined`, oder vom Lead empfohlen (`proposed_at`) | **User**     |
 | In Arbeit        | `planning`, `running`, `plan_ready` mit Autopilot | Agenten      |
 | Wartet auf dich  | `awaiting_input`, `blocked`, `failed`, `limit_reached`, wartende Freigabe-Stufe | **User** |
 | Erledigt         | `done`                                            | —            |
-| Geparkt          | `backlog`: soll **später** noch gemacht werden    | —            |
+| Backlog          | `backlog`: soll **später** noch gemacht werden    | —            |
 | Geschlossen      | `closed`: wird nicht gemacht (zusammengelegt, überholt, Duplikat, anderweitig gelöst). `lead_note` sagt warum, „Wieder öffnen“ ist möglich | — |
 
 Die Tasks-Seite zeigt das als **Board**, von links nach rechts wie ein Task
-läuft: Ideen (Geparkte eingeklappt darunter), Zur Freigabe, In Arbeit,
-Wartet auf dich (hervorgehoben), Erledigt (letzte 7 Tage). Ideen und Erledigt
-sind auf 8 Karten eingeklappt. Jede Karte nennt den
+läuft: Todo, Zur Freigabe, In Arbeit, Wartet auf dich (hervorgehoben),
+Erledigt (letzte 7 Tage). Todo und Erledigt sind auf 8 Karten eingeklappt.
+Eine Suche (#Nummer oder Stichwort) filtert alle Spalten. Jede Karte nennt den
 nächsten Schritt (z. B. „Frage offen · Stufe 3/5“, „nicht übernommen“) und
 bietet die passende Aktion als Link in den Task- bzw. Lead-Chat. Ziehen per
 Drag & Drop gibt es absichtlich nicht, denn die Übergänge sind geschützt.
-Alle Erledigten und Geschlossen sind eigene Listen. Daten:
+Backlog, alle Erledigten und Geschlossen sind eigene Tabs. Daten:
 `GET /p/<projekt>/api/tasks/board`.
 
 ## Lead-Kanal und Chat pro Task
@@ -97,7 +97,7 @@ bearbeiten, Stufe wiederholen oder überspringen.
   - zusammenlegen (→ Geschlossen)
   - schon erledigt (→ Erledigt)
   - überholt (→ Geschlossen)
-  - später (→ Geparkt)
+  - später (→ Backlog)
 
   Für Tasks, die der User selbst angelegt hat, gibt es eine Karte, und der
   User entscheidet.

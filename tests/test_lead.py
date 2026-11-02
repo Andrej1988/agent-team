@@ -209,7 +209,7 @@ def test_board_groups_open_and_recent_done(app_client, monkeypatch):
     assert r.status_code == 200, r.text
     b = r.json()
     ids = {t["id"]: t for t in b["tasks"]}
-    assert set(ids) == {new, run, fresh, parked}
+    assert set(ids) == {new, run, fresh}  # backlog has its own tab
     st = ids[run]["board"]["stages"]
     assert (st["done"], st["total"]) == (1, 3)
     assert st["current"]["index"] == 2 and st["current"]["status"] == "running" and st["current"]["label"]

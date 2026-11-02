@@ -188,7 +188,7 @@ const DUTY_LABEL: Record<string, string> = {
 function taskMovedOn(t: Task): string | null {
   if (t.status === 'done') return `#${t.id} schon erledigt`
   if (t.status === 'closed') return `#${t.id} geschlossen`
-  if (t.status === 'backlog') return `#${t.id} geparkt`
+  if (t.status === 'backlog') return `#${t.id} im Backlog`
   if (t.mode === 'pipeline') return `#${t.id} läuft bereits`
   return null
 }

@@ -142,10 +142,11 @@ stateDiagram-v2
     WartetAufDich --> InArbeit: 👤 Antwort / Klick
     InArbeit --> Erledigt: Prüfer + Gates ok
     Erledigt --> [*]: 👤 Übernehmen
-    Idee --> Geparkt: später
+    Idee --> Backlog: später
     Idee --> Geschlossen: Duplikat · überholt
-    Geparkt --> Idee
+    Backlog --> Idee
 
+    Idee: Todo
     ZurFreigabe: Zur Freigabe
     InArbeit: In Arbeit
     WartetAufDich: Wartet auf dich
