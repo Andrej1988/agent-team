@@ -741,14 +741,30 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
 
       <div className="flex min-h-0 flex-1 flex-col">
         {view === 'board' && !loading && !error ? (
+          <>
+          <div className="mb-2 flex items-center gap-2">
+            <input value={query} onChange={(e) => setQuery(e.target.value)} type="search" inputMode="search"
+              placeholder={`Suchen: #Nummer oder Stichwort (${tasks.length})`}
+              className="w-full max-w-md rounded border border-slate-600 bg-slate-900 px-2.5 py-1.5 text-sm text-slate-200 placeholder:text-slate-500" />
+            {query.trim() && (
+              <span className="shrink-0 text-xs text-slate-500">
+                {tasks.filter((t) => matchesQuery(t, query)).length} Treffer ·{' '}
+                <button onClick={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('done') } }} className="underline hover:text-slate-300">in allen Erledigten</button>
+                {' · '}
+                <button onClick={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('closed') } }} className="underline hover:text-slate-300">Geschlossenen</button>
+              </span>
+            )}
+          </div>
           <Board
-            tasks={tasks}
+            tasks={tasks.filter((t) => matchesQuery(t, query))}
+            searching={!!query.trim()}
             selectedId={draft?.id ?? null}
             onSelect={selectTask}
             chatFor={(t) => (chatIds.has(`task-${currentProject()}-${t.id}`) ? `task-${currentProject()}-${t.id}` : null)}
             leadChannel={leadChannel}
             onAllDone={() => { if (confirmDiscardIfDirty()) { setDraft(null); setView('done') } }}
           />
+          </>
         ) : (
         <div className="overflow-y-auto rounded-lg border border-slate-700 bg-slate-800">
           {loading ? (

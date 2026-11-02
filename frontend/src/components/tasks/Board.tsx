@@ -125,8 +125,9 @@ function Card({ t, selected, onSelect, action }: {
   )
 }
 
-export default function Board({ tasks, selectedId, onSelect, chatFor, leadChannel, onAllDone }: {
+export default function Board({ tasks, selectedId, onSelect, chatFor, leadChannel, onAllDone, searching = false }: {
   tasks: BoardTask[]
+  searching?: boolean                         // a search filter is active: nothing folded
   onAllDone: () => void                       // "alle Erledigten" → the full list
   selectedId: number | null
   onSelect: (t: BoardTask) => void
@@ -144,7 +145,9 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
   // Phones open where something needs me, else where things move.
   const firstBusy: Lane = (['wartet', 'freigabe', 'arbeit'] as Lane[]).find((id) => count(id) > 0) ?? 'idee'
   const [lane, setLane] = useState<Lane | null>(null) // phones: one lane at a time
-  const shown = lane ?? firstBusy
+  // While searching, jump to a lane with hits if the chosen one has none.
+  const firstHit = LANES.find((l) => count(l.id) > 0 || (l.id === 'idee' && byLane.parked.length > 0))?.id ?? 'idee'
+  const shown = searching ? (lane && (count(lane) > 0 || (lane === 'idee' && byLane.parked.length > 0)) ? lane : firstHit) : (lane ?? firstBusy)
   const [open, setOpen] = useState<Partial<Record<Lane, boolean>>>({})
 
   const actionFor = (t: BoardTask) => {
@@ -160,7 +163,7 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
     let list = byLane[id]
     let more = 0
     const foldable = id === 'idee' || id === 'erledigt'
-    if (foldable && !open[id] && list.length > FOLDED) {
+    if (foldable && !searching && !open[id] && list.length > FOLDED) {
       more = list.length - FOLDED
       list = list.slice(0, FOLDED)
     }
@@ -179,7 +182,7 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
         )}
         {byLane[id].length === 0 && <div className="py-3 text-center text-xs text-slate-600">—</div>}
         {id === 'idee' && byLane.parked.length > 0 && (
-          <details className="mt-1 rounded border border-slate-700/70 p-1.5 [&_summary]:list-none">
+          <details open={searching || undefined} className="mt-1 rounded border border-slate-700/70 p-1.5 [&_summary]:list-none">
             <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200" title="Soll später noch gemacht werden">
               ▸ Geparkt ({byLane.parked.length})
             </summary>
