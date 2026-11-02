@@ -1,0 +1,67 @@
+# agent-team, native run without Docker (agent_team.local / tools/run-local.sh).
+# Copy to ~/.agent-team/local.yaml and adapt. Setup: docs/SETUP.md.
+# Never put secrets here — use `claude` login, an AWS profile / SSO login, the
+# gh keychain, or an env var exported in your shell (ANTHROPIC_API_KEY).
+
+data_dir: ~/.agent-team/data              # tasks DBs, chats, logs, budget ledger
+projects_file: ~/.agent-team/projects.yaml
+worktree_root: ~/.agent-team/worktrees    # one folder per started task
+
+port: 8700            # browser: http://127.0.0.1:8700
+internal_port: 8701   # workers / agents only (cannot start tasks or "Übernehmen")
+chat_port: 8702
+
+# "Übernehmen" (take a finished task over):
+#   pr    = push the task branch + open a draft PR (gh; GitHub / GitHub Enterprise)
+#   merge = fast-forward the local checkout, nothing is pushed
+apply_mode: pr
+git_identity: user    # commits as you (git config); "agents" = one identity per agent
+branch_prefix: agent/ # task branches: agent/<id>
+
+# Pacing of the autonomous work (scouts, lead, autopilot); your own clicks
+# always run.
+budget:
+  # usd          = per-token billing (Bedrock, API key): stop at these caps
+  # subscription = Claude Pro/Max login: spread the weekly limit over the days
+  mode: usd
+  usd_per_day: 20
+  usd_per_week: 80    # 0 = no cap
+
+models:
+  refine: sonnet      # aliases; on Bedrock mapped by the env below
+  execute: opus
+
+# Passed to every process (agents included). Pick ONE way to reach Claude:
+env:
+  # a) Claude subscription: nothing here — run `claude` once and log in.
+  # b) API key: export ANTHROPIC_API_KEY in your shell (not here).
+  # c) Amazon Bedrock:
+  CLAUDE_CODE_USE_BEDROCK: "1"
+  AWS_PROFILE: my-bedrock-profile
+  AWS_REGION: eu-central-1
+  # Bedrock model / inference-profile ids behind the aliases (check what your
+  # account offers: aws bedrock list-inference-profiles):
+  ANTHROPIC_DEFAULT_OPUS_MODEL: eu.anthropic.claude-opus-5-5-v1:0
+  ANTHROPIC_DEFAULT_SONNET_MODEL: eu.anthropic.claude-sonnet-5-5-v1:0
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: eu.anthropic.claude-haiku-5-5-v1:0
+  # GitHub Enterprise instead of github.com (apply_mode: pr):
+  GH_HOST: github.example-company.com
+
+# Places agents must never write to or deploy with. Every agent session
+# (tasks, scouts, chats) gets a hook that refuses: writing under these paths,
+# Bash commands naming them, Maven runs with these profiles, and commands
+# matching these regexes. A tripwire against accidents, not a sandbox.
+# Required — `deploy_guard: {none: true}` if there really is nothing to guard.
+deploy_guard:
+  paths:
+    - /Volumes/deploy                  # e.g. the mounted share build artefacts are copied to
+  profiles: [deploy, prod]             # Maven profiles that copy / deploy
+  patterns:
+    - '\bmvn\w*\b.*\sdeploy(\s|$)'    # the Maven deploy goal (artifact upload)
+
+# Per project extra env for its worker (and its scouts); a project may add
+# its own deploy_guard (merged with the global one).
+projects:
+  webapp:
+    env:
+      AT_LOG_GLOBS: "/Volumes/logs/my-webapp/*.log"

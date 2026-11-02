@@ -1,0 +1,103 @@
+# Team template for one web application (one git repo = one project).
+# Copy to e.g. ~/.agent-team/teams/<project>/ and replace:
+#   webapp            -> the project id from projects.yaml (channel ids below)
+#   my-webapp         -> the repo's directory name(s) under the project root
+#   worker.label / execute_conventions -> what the app is, its binding rules
+#                        (build/test commands per repo, ports, what is forbidden)
+# Docs: agent-team docs/SETUP.md, docs/TASKS-V2.md.
+#
+# Two layouts:
+#  a) one repo per app: projects.yaml cwd = the repo (~/git/my-webapp);
+#     `repos: [my-webapp]` is then just a label.
+#  b) backend + frontend in separate repos under one git folder: cwd = the
+#     git folder (~/git), `repos:` = the app's repos, `isolate_repos: true` —
+#     task workspaces then contain only these repos, not the user's others.
+project: webapp
+worker:
+  label: the my-webapp application (Java backend, Angular frontend; internal web app)
+  # Example for Java/Maven + Angular — replace with what the repos really use
+  # (read the pom.xml profiles and package.json scripts, ask the user).
+  execute_conventions: >-
+    Read each repo's README / AGENTS.md / CLAUDE.md first and follow them.
+    Backend (Maven): build and test with `mvn -B verify` (or `./mvnw`), never
+    with a deploy profile and never the `deploy` goal; the WAR in target/ is
+    the result, nobody copies it anywhere. Frontend (Angular): in a fresh task
+    workspace run `npm ci` once; test with `npx ng test --watch=false
+    --browsers=ChromeHeadless`, lint with the repo's lint script, build with
+    the repo's build script. Do not start the apps on their usual ports — the
+    user runs them locally; if a running server is needed use a free port and
+    stop it before you finish. Keep the change small and focused; never push,
+    never merge, never touch a default branch — the user turns the task
+    branch into a draft PR and deploys after the merge.
+
+repos:
+  - my-webapp
+repo_prefix: ""
+new_repo_pattern: '(?!)'
+live_repos: []
+# isolate_repos: true      # layout b) only
+
+# The reviewer's verdict gates completion and cannot be skipped in the UI.
+gate_roles: [reviewer]
+
+# Every plan ends with a reviewer; done requires it to pass.
+final:
+  role: reviewer
+  goal: >-
+    Final review of everything the pipeline produced against the task and its
+    acceptance criteria: scope fidelity, build and tests actually run and
+    green (commands + counts quoted), security findings really fixed,
+    nothing glossed over.
+
+confirm_roles: []
+
+roles:
+  - id: orchestrator
+    is_stage: false
+    description: Plans the stage pipeline for a task and re-plans after a failed gate. Not a stage.
+  - id: lead
+    is_stage: false
+    description: Team lead — picks the next tasks for the user's approval in the lead channel. Not a stage.
+  - id: implementation-engineer
+    description: Implements features and bug fixes in the repo.
+  - id: security-engineer
+    description: Dependency updates and security findings (Dependabot, pentest) — triage, fix, prove it is gone.
+  - id: test-engineer
+    description: Writes and runs tests with the repo's own tooling.
+  - id: reviewer
+    description: "Final gate: scope, build/tests green, findings really fixed, nothing glossed over."
+
+scouts:
+  # Monday: the lead sums up the week in the lead channel.
+  - id: weekly-report
+    role: lead
+    report: true
+    every_hours: 168
+    always: true
+    model: sonnet
+    channel: webapp-lead
+  # Daily: the lead recommends what to start next (cards with "Freigeben & starten").
+  - id: lead
+    role: lead
+    lead: true
+    every_hours: 24
+    model: opus
+    max_proposals: 3
+    channel: webapp-lead
+  # Open Dependabot alerts (fetched by code via gh, grouped by the agent).
+  - id: dependabot
+    role: security-engineer
+    prepare: dependabot-alerts.sh
+    every_hours: 24
+    model: sonnet
+    max_proposals: 5
+    channel: webapp
+  # New error groups in the app's log files (network share); remove this
+  # scout if there are no logs. Set AT_LOG_GLOBS in local.yaml (projects.<id>.env).
+  - id: logs
+    role: implementation-engineer
+    prepare: log-digest.sh
+    every_hours: 12
+    model: sonnet
+    max_proposals: 3
+    channel: webapp

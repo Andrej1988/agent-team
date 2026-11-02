@@ -1,0 +1,142 @@
+# Test fixture: a trading-style team with every pipeline rule the backend
+# supports (follow-up auditor, metric gates, variant penalty, wait roles,
+# confirm roles, live repos, scouts). Used by tests/conftest.py as project
+# "demo". Not a real team — prompts are placeholders.
+
+project: demo
+
+worker:
+  label: the demo monorepo (a fictional trading system)
+  execute_conventions: >-
+    Follow each repo's README and test setup; keep changes small.
+
+repos:
+  - demo
+  - demo-base
+  - demo-funding-fee
+  - demo-historical-data
+  - demo-infrastructure
+  - demo-intraday
+  - demo-live-data
+  - demo-lstm
+  - demo-monitoring
+  - demo-options
+  - demo-swing
+  - demo-tax
+  - demo-weekly
+repo_prefix: demo-
+new_repo_pattern: '^demo-[a-z0-9][a-z0-9-]{1,40}$'
+
+live_repos:
+  - demo
+  - demo-intraday
+  - demo-swing
+  - demo-weekly
+  - demo-options
+  - demo-funding-fee
+  - demo-lstm
+
+gate_roles: [backtest-auditor, reviewer]
+
+follow_up:
+  backtest-engineer:
+    role: backtest-auditor
+    goal: >-
+      Adversarially audit the preceding backtest-engineer stage and re-run it
+      with stricter assumptions where needed.
+
+final:
+  role: reviewer
+  goal: >-
+    Final review of everything the pipeline produced against the task and its
+    exit criteria.
+  may_follow: [integration-ops, live-release]
+
+hands_off_allow:
+  - "demo-test-db (a test database no live service uses): resetting its data is allowed."
+
+confirm_roles: [integration-ops, live-release]
+
+metric_gates:
+  backtest-auditor:
+    oos_sharpe: ">= 1.0"
+    max_drawdown_pct: "<= 25"
+    oos_trades: ">= 30"
+
+metric_files: [backtest-auditor]
+
+variant_penalty:
+  backtest-auditor:
+    count: backtest-engineer
+    step: {oos_sharpe: 0.25}
+    max_variants: 3
+
+wait_roles:
+  paper-reviewer: {days: 14}
+
+scouts:
+  - id: weekly-report
+    role: lead
+    report: true
+    every_hours: 168
+    always: true
+    model: sonnet
+    channel: demo-lead
+  - id: lead
+    role: lead
+    lead: true
+    every_hours: 24
+    model: opus
+    max_proposals: 3
+    channel: demo-lead
+  - id: research
+    role: quant
+    every_hours: 24
+    model: opus
+    max_proposals: 2
+    channel: demo-quant
+    ledger: true
+  - id: watchdog
+    role: integration-ops
+    every_hours: 8
+    model: sonnet
+    max_proposals: 5
+    channel: demo-watchdog
+    prepare: watchdog-digest.sh
+    always: true
+  - {id: reliability, role: integration-ops, every_hours: 24, model: opus, max_proposals: 3, channel: demo-integration-ops}
+  - {id: order-ids, role: integration-ops, every_hours: 24, model: opus, max_proposals: 3, channel: demo-integration-ops}
+  - {id: tests, role: test-engineer, every_hours: 24, model: opus, max_proposals: 3, channel: demo-test-engineer}
+  - {id: data-quality, role: data-engineer, every_hours: 24, model: opus, max_proposals: 3, channel: demo-data-engineer}
+  - {id: logging, role: reviewer, every_hours: 168, model: opus, max_proposals: 3, channel: demo-reviewer}
+  - {id: deps, role: reviewer, every_hours: 168, model: opus, max_proposals: 3, channel: demo-reviewer}
+  - {id: conventions, role: reviewer, every_hours: 168, model: opus, max_proposals: 3, channel: demo-reviewer}
+  - {id: backtest, role: backtest-auditor, every_hours: 168, model: opus, max_proposals: 3, channel: demo-backtest-auditor}
+
+roles:
+  - id: orchestrator
+    is_stage: false
+    description: Plans the stage pipeline for a task and re-plans after a failed gate. Not a stage.
+  - id: lead
+    is_stage: false
+    description: Team lead — picks the next tasks for the user's approval. Not a stage.
+  - id: quant
+    description: Hypothesis, sizing and risk; proposes measurable exit criteria.
+  - id: data-engineer
+    description: Data coverage, quality and leak-free features.
+  - id: backtest-engineer
+    description: Builds and runs the backtest with costs and an out-of-sample split.
+  - id: backtest-auditor
+    description: "Adversarial review of the backtest: look-ahead, costs, overfitting."
+  - id: implementation-engineer
+    description: Implements the approved change in the repo.
+  - id: test-engineer
+    description: Writes and runs tests for the implemented change.
+  - id: integration-ops
+    description: Wiring, deployment to paper, logging and alerting.
+  - id: reviewer
+    description: "Final review: scope, conventions, tests green."
+  - id: paper-reviewer
+    description: "After the paper phase: paper results vs. backtest — go/no-go."
+  - id: live-release
+    description: "Goes live after paper + review — only after your click."

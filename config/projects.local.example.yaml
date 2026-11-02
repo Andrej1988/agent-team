@@ -1,0 +1,29 @@
+# Projects for the native run — copy to ~/.agent-team/projects.yaml.
+# One project per web application repo. Per project:
+#   team_dir: the team (team.yaml + roles/ + scouts/), from
+#             templates/team-webapp — outside the repo, so the company repo
+#             gets no agent files
+#   chat:     channels; the shortest cwd is the project root (= the repo)
+projects:
+  webapp:
+    name: My Webapp
+    team_dir: ~/.agent-team/teams/webapp
+    chat:
+      defaults: {backend: claude, claude_model: opus}
+      channels:
+        - {id: webapp, label: System, cwd: ~/git/my-webapp}
+        - {id: webapp-lead, label: Lead, cwd: ~/git/my-webapp, lead: true,
+           persona: ~/.agent-team/teams/webapp/roles/lead.md}
+
+  # Layout b): backend + frontend in separate repos under the git folder.
+  # cwd = the folder holding both; the team lists the repos and sets
+  # `isolate_repos: true` (templates/team-webapp/team.yaml).
+  # orders:
+  #   name: Orders
+  #   team_dir: ~/.agent-team/teams/orders
+  #   chat:
+  #     defaults: {backend: claude, claude_model: opus}
+  #     channels:
+  #       - {id: orders, label: System, cwd: ~/git}
+  #       - {id: orders-lead, label: Lead, cwd: ~/git, lead: true,
+  #          persona: ~/.agent-team/teams/orders/roles/lead.md}

@@ -1,0 +1,4 @@
+# Native run without Docker (agent_team.local, docs/SETUP.md):
+# web app + chat service + workers in one venv.
+-r requirements.txt
+claude-agent-sdk

@@ -1,0 +1,60 @@
+# agent-team-chat — agent sessions for the chat channels; also the image of
+# the per-project workers (agent-team-worker-*).
+#
+# Agent CLIs (claude, codex), claude-agent-sdk, docker CLI + compose (delegation via
+# the socket), git/ssh, devuser (uid 1000) and base/ (tasks_api.py,
+# model_catalog.py, cli-upgrade.sh) under /app.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git gnupg lsb-release openssh-client tini \
+ && mkdir -p /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
+      > /etc/apt/sources.list.d/docker.list \
+ && curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+# Image-baked CLIs; cli-upgrade.sh refreshes them into ~/.npm-global at every
+# start. Bump AGENT_CLI_REFRESH to force a fresh layer.
+ARG AGENT_CLI_REFRESH=0
+RUN echo "agent-cli refresh ${AGENT_CLI_REFRESH}" \
+ && npm install -g --no-fund --no-audit @anthropic-ai/claude-code @openai/codex \
+ && claude --version && codex --version
+
+RUN pip install --no-cache-dir claude-agent-sdk python-dotenv
+
+RUN groupadd --gid 1000 devuser \
+ && useradd  --uid 1000 --gid 1000 -m --shell /bin/bash devuser \
+ && mkdir -p /app /data /home/devuser/.codex \
+ && chown -R devuser:devuser /app /data /home/devuser/.codex
+WORKDIR /app
+COPY --chown=devuser:devuser base/tasks_api.py base/model_catalog.py base/cli-upgrade.sh ./
+RUN chmod +x cli-upgrade.sh
+
+# A real browser for agents (QA scout, chat channels): Chromium + the
+# Playwright MCP server; agents attach it via --mcp-config (see
+# agent_team/worker/scouts.py BROWSER_MCP).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium fonts-dejavu-core fonts-noto-color-emoji \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g --no-fund --no-audit @playwright/mcp@0.0.83
+COPY requirements.txt /tmp/at-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/at-requirements.txt && rm /tmp/at-requirements.txt
+COPY --chown=devuser:devuser src/ /opt/agent-team/src/
+COPY --chown=devuser:devuser config/ /opt/agent-team/config/
+COPY --chown=devuser:devuser tools/chat-entrypoint.sh tools/worker-entrypoint.sh /opt/agent-team/
+RUN chmod +x /opt/agent-team/chat-entrypoint.sh /opt/agent-team/worker-entrypoint.sh
+
+USER devuser
+ENV PYTHONPATH=/opt/agent-team/src AT_PROJECTS_FILE=/opt/agent-team/config/projects.yaml
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/opt/agent-team/chat-entrypoint.sh"]

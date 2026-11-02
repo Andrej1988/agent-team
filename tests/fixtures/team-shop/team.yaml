@@ -1,0 +1,106 @@
+# Test fixture: a web-app team with a confirmed deploy role after the final
+# review (confirm_roles + final.may_follow) and no live repos. Used by
+# tests/test_team_rules.py as project "shop". Prompts are placeholders.
+
+project: shop
+
+worker:
+  label: the shop workspace (a fictional web app)
+  execute_conventions: >-
+    Follow each repo's README; never deploy — deploys happen only in an
+    approved release-manager stage.
+
+repos:
+  - shop-app
+  - shop-data
+  - shop-infrastructure
+repo_prefix: shop-
+new_repo_pattern: '^shop-[a-z0-9][a-z0-9-]{1,40}$'
+
+live_repos: []
+
+gate_roles: [reviewer]
+
+final:
+  role: reviewer
+  goal: >-
+    Final review of everything the pipeline produced against the task and its
+    acceptance criteria.
+  may_follow: [release-manager]
+
+confirm_roles: [release-manager]
+
+roles:
+  - id: orchestrator
+    is_stage: false
+    description: Plans the stage pipeline for a task and re-plans after a failed gate. Not a stage.
+  - id: product-owner
+    description: User value, scope and measurable acceptance criteria.
+  - id: implementation-engineer
+    description: Implements app / infrastructure changes.
+  - id: data-engineer
+    description: Data import and data quality.
+  - id: test-engineer
+    description: Writes and runs tests.
+  - id: reviewer
+    description: "Final gate: scope, conventions, tests green."
+  - id: release-manager
+    description: "Deploys an approved change and verifies it — only after your click."
+  - id: qa-tester
+    description: Tests the running app like real users in a headless browser.
+  - id: legal
+    description: Legal assessment of texts, data sources and compliance.
+
+scouts:
+  - id: weekly-report
+    role: product-owner
+    report: true
+    every_hours: 168
+    always: true
+    model: sonnet
+    channel: shop-lead
+  - id: lead
+    role: product-owner
+    lead: true
+    every_hours: 24
+    model: opus
+    max_proposals: 3
+    channel: shop-lead
+  - id: product-owner
+    role: product-owner
+    every_hours: 24
+    model: opus
+    max_proposals: 3
+    channel: shop-lead
+  - id: qa-tester
+    role: qa-tester
+    every_hours: 24
+    model: sonnet
+    max_proposals: 5
+    channel: shop-qa-tester
+    browser: true
+    artifacts: .claude/skills/app-test/runs
+  - id: legal
+    role: legal
+    every_hours: 168
+    model: opus
+    max_proposals: 3
+    channel: shop-legal
+  - id: tests
+    role: test-engineer
+    every_hours: 24
+    model: sonnet
+    max_proposals: 3
+    channel: shop-test-engineer
+  - id: data-quality
+    role: data-engineer
+    every_hours: 24
+    model: sonnet
+    max_proposals: 3
+    channel: shop-data-engineer
+  - id: review
+    role: reviewer
+    every_hours: 168
+    model: sonnet
+    max_proposals: 3
+    channel: shop-reviewer

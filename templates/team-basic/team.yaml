@@ -1,0 +1,65 @@
+# Minimal team for any topic (one git repo = one project). Start here when
+# the project is not a web application — a book, research notes, a data
+# pipeline, a game, a website, infrastructure … — and grow it (docs/TEAMS.md).
+# Copy to ~/.agent-team/teams/<project>/ and replace:
+#   myproject   -> the project id from projects.yaml (also in channel ids)
+#   my-repo     -> the repo's directory name
+#   worker.label / execute_conventions -> what the project is, its rules
+project: myproject
+worker:
+  label: the my-repo repository (describe in a few words what it is)
+  execute_conventions: >-
+    Read the repo's README / AGENTS.md / CLAUDE.md first and follow them;
+    keep changes small and focused; check your work the way the repo
+    describes (tests, build, a script, proofreading …); never push, never
+    merge, never touch the default branch.
+
+repos:
+  - my-repo
+repo_prefix: ""
+new_repo_pattern: '(?!)'
+live_repos: []
+
+# The reviewer's verdict gates completion.
+gate_roles: [reviewer]
+final:
+  role: reviewer
+  goal: >-
+    Final review of everything the pipeline produced against the task and its
+    acceptance criteria: scope, quality, evidence that it was checked,
+    nothing glossed over.
+confirm_roles: []
+
+roles:
+  - id: orchestrator
+    is_stage: false
+    description: Plans the stages of a task and re-plans after a failed gate. Not a stage.
+  - id: lead
+    is_stage: false
+    description: Team lead — recommends the next tasks for the user's approval. Not a stage.
+  - id: worker
+    description: Does the work in the repo (writes, changes, fixes).
+  - id: reviewer
+    description: "Final gate: scope, quality, evidence, nothing glossed over."
+
+scouts:
+  - id: weekly-report          # Monday: summary of the week in the lead channel
+    role: lead
+    report: true
+    every_hours: 168
+    always: true
+    model: sonnet
+    channel: myproject-lead
+  - id: lead                   # daily: what to start next ("Freigeben & starten")
+    role: lead
+    lead: true
+    every_hours: 24
+    model: opus
+    max_proposals: 3
+    channel: myproject-lead
+  - id: ideas                  # proposals from looking at the repo
+    role: worker
+    every_hours: 48
+    model: sonnet
+    max_proposals: 3
+    channel: myproject

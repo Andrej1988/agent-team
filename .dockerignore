@@ -1,0 +1,6 @@
+data/
+cloudflared.env
+.git/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/

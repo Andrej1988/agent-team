@@ -1,0 +1,6 @@
+fastapi==0.130.0
+uvicorn[standard]==0.34.2
+PyJWT[crypto]==2.15.1
+pywebpush==2.4.0
+PyYAML==6.0.2
+httpx==0.28.1

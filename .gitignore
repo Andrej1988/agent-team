@@ -1,0 +1,12 @@
+.env
+cloudflared.env
+data/
+__pycache__/
+node_modules/
+.pytest_cache/
+.claude/session.log
+.claude/SESSION.md
+
+.claude/settings.local.json
+frontend/dist/
+.venv/
