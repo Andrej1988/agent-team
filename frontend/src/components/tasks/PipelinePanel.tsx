@@ -296,6 +296,7 @@ export default function PipelinePanel({
 
   const disabled = busy || acting
   const historySeqMax = history.reduce((m, s) => Math.max(m, s.seq), 0)
+  const lastRunSeq = history.filter((s) => s.status !== 'skipped').reduce((m, s) => Math.max(m, s.seq), 0)
 
   const act = async (fn: () => Promise<Task>, after?: (t: Task) => void) => {
     setActing(true)
@@ -511,7 +512,7 @@ export default function PipelinePanel({
             open={!!open[s.seq]}
             disabled={disabled}
             canSkip={planEditable && (s.status === 'failed' || s.status === 'awaiting_input') && !gateRoles.has(s.role)}
-            canRetry={(s.status === 'failed' || (s.status === 'done' && s.verdict === 'blocked')) && (status === 'failed' || status === 'limit_reached' || status === 'plan_ready' || status === 'blocked')}
+            canRetry={(s.status === 'failed' || (s.status === 'done' && (s.verdict === 'blocked' || (s.verdict === 'fail' && status === 'blocked' && s.seq === lastRunSeq)))) && (status === 'failed' || status === 'limit_reached' || status === 'plan_ready' || status === 'blocked')}
             onToggle={() => setOpen((o) => ({ ...o, [s.seq]: !o[s.seq] }))}
             onOpenStream={() => onOpenStream(`stage_${s.seq}`)}
             onSkip={() => skip(s.seq)}

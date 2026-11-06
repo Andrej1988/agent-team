@@ -639,6 +639,25 @@ def test_retry_stage_that_reported_blocked(db):
     assert r["status"] == "running" and _stages(db, t["id"])[1]["attempt"] == 2
 
 
+def test_retry_last_stage_with_fail_verdict_on_stopped_task(db):
+    t, _ = make_pipeline(db, ["quant", "backtest-engineer"])
+    run_and_complete(db, t["id"], "fail")
+    assert db.retry_stage(t["id"], 1) is None  # not stopped: the planner decides
+    db.stop_pipeline(t["id"])
+    assert db.get_task(t["id"])["status"] == "blocked"
+    r = db.retry_stage(t["id"], 1)
+    assert r["status"] == "running" and _stages(db, t["id"])[1]["attempt"] == 2
+
+
+def test_retry_refuses_older_fail_verdict(db):
+    old = {"seq": 1, "status": "done", "verdict": "fail"}
+    later = {"seq": 2, "status": "done", "verdict": "pass"}
+    tail = {"seq": 3, "status": "pending", "verdict": None}
+    assert not db.stage_retryable("blocked", old, [old, later, tail])
+    assert db.stage_retryable("blocked", old, [old, tail])
+    assert not db.stage_retryable("failed", old, [old, tail])
+
+
 def test_skip_refuses_gate_roles(db):
     t, _ = make_pipeline(db, ["quant", "backtest-engineer"])
     got = _stages(db, t["id"])

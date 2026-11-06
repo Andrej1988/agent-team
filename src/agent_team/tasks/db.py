@@ -1291,20 +1291,38 @@ def skip_stage(task_id: int, seq: int) -> Optional[dict]:
     return get_task(task_id)
 
 
+def stage_retryable(task_status: str, stage: dict, stages: list[dict]) -> bool:
+    """Can the user run this stage again? A failed stage (agent crash, limit,
+    user stop) or one with verdict `blocked`, as long as the task is halted.
+    Verdict `fail` only on a stopped task and only for the stage it stopped
+    at: there the cause can lie outside the code (a dashboard switch the user
+    has since flipped). An older `fail` was already answered by later stages."""
+    if task_status not in ("failed", "limit_reached", "plan_ready", "blocked"):
+        return False
+    if stage["status"] == "failed":
+        return True
+    if stage["status"] != "done":
+        return False
+    if stage.get("verdict") == "blocked":
+        return True
+    last = next((s for s in reversed(stages) if s["status"] not in ("pending", "skipped")), None)
+    return (stage.get("verdict") == "fail" and task_status == "blocked"
+            and last is not None and last["seq"] == stage["seq"])
+
+
 def retry_stage(task_id: int, seq: int) -> Optional[dict]:
-    """Re-run a failed stage (agent crash, limit, user stop) or one that
-    finished with verdict `blocked` (e.g. a hindrance the user has since
-    removed). Fresh attempt; the worker may resume the stored session."""
+    """Re-run a stage the user may retry (see stage_retryable). Fresh attempt;
+    the worker may resume the stored session."""
     now = _now()
     with _tx() as cx:
         task = _task_row(cx, task_id)
-        if not task or task["status"] not in ("failed", "limit_reached", "plan_ready", "blocked"):
+        if not task:
             return None
         stage = _stage_row(cx, task_id, seq)
-        if not stage or not (stage["status"] == "failed"
-                             or (stage["status"] == "done" and stage.get("verdict") == "blocked")):
+        stages = _stage_rows(cx, task_id)
+        if not stage or not stage_retryable(task["status"], stage, stages):
             return None
-        if any(s["status"] == "running" for s in _stage_rows(cx, task_id)):
+        if any(s["status"] == "running" for s in stages):
             raise TransitionError("another stage is running")
         _start_stage(cx, task_id, stage, now)
     return get_task(task_id)

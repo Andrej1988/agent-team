@@ -161,6 +161,9 @@ def test_stopped_task_card_offers_ways_out(lead_project):
     card = mirror.stuck_card(task, stages, "⛔ Gestoppt", task["stop_reason"])
     assert [b["data"] for row in card["buttons"] for b in row] == ["retry:131:2", "replan:131", "done:131", "close:131"]
     assert "Was jetzt?" in card["text"] and "exit criteria unmet" in card["text"]
+    stages[1].update(verdict="fail")
+    card = mirror.stuck_card(task, stages, "⛔ Gestoppt", "x")
+    assert card["buttons"][0][0]["data"] == "retry:131:2"
     stages[1].update(verdict="pass")
     card = mirror.stuck_card(task, stages, "⛔ Gestoppt", "x")
     assert [b["data"] for row in card["buttons"] for b in row] == ["replan:131", "done:131", "close:131"]

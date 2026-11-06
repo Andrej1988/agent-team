@@ -250,8 +250,7 @@ def stuck_card(task: dict, stages: list[dict], title: str, why: str) -> dict:
     tid = task["id"]
     rows, hints = [], []
     last = next((s for s in reversed(stages) if s["status"] not in ("pending", "skipped")), None)
-    if last is not None and (last["status"] == "failed"
-                             or (last["status"] == "done" and last.get("verdict") == "blocked")):
+    if last is not None and tasks_db.stage_retryable(task.get("status") or "", last, stages):
         rows.append([{"label": f"Stufe {last['seq']} erneut versuchen", "data": f"retry:{tid}:{last['seq']}"}])
         hints.append(f"Erneut versuchen: Stufe {last['seq']} ({_role_label(last['role'])}) läuft noch einmal — "
                      "sinnvoll, wenn das Hindernis inzwischen behoben ist.")
