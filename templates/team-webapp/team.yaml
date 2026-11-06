@@ -92,6 +92,13 @@ scouts:
     model: sonnet
     max_proposals: 5
     channel: webapp
+  # Weekly: structure and architecture, not small clean-ups.
+  - id: refactor
+    role: reviewer
+    every_hours: 168
+    model: opus
+    max_proposals: 2
+    channel: webapp
   # New error groups in the app's log files (network share); remove this
   # scout if there are no logs. Set AT_LOG_GLOBS in local.yaml (projects.<id>.env).
   - id: logs
