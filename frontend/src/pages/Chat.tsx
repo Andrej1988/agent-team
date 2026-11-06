@@ -772,6 +772,13 @@ export default function Chat() {
         await api.lead.retry(info.project, Number(rt[1]), Number(rt[2]))
         done = `Stufe ${rt[2]} läuft erneut`
       }
+      const sm = /^summarize:(\d+)$/.exec(b.data)
+      if (!service && sm && info?.project) {
+        await api.lead.summarize(info.project, Number(sm[1]))
+        followRef.current = true
+        refreshTask()
+        return
+      }
       const sk = /^skip:(\d+):(\d+)$/.exec(b.data)
       if (!service && sk && info?.project) {
         await api.lead.skip(info.project, Number(sk[1]), Number(sk[2]))

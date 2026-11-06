@@ -41,6 +41,15 @@ export default function TaskStatusBar({ state, onAction }: {
           </button>
         )}
       </div>
+      {task.user_summary && (
+        // Open while the user has to decide; the key reopens it on a new state.
+        <details key={task.status} open={task.status === 'plan_ready'} className="mt-2 text-xs">
+          <summary className="cursor-pointer text-slate-400 hover:text-slate-200">Zusammenfassung</summary>
+          <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded border border-slate-700 bg-slate-950/50 p-2 text-slate-200">
+            {task.user_summary}
+          </div>
+        </details>
+      )}
       {shown.length > 0 && (
         <div className="mt-2 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
           {shown.map((a) => (

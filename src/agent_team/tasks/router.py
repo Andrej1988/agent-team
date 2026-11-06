@@ -586,7 +586,33 @@ def task_actions(task_id: int):
     if not t:
         raise HTTPException(404, "task not found")
     _add_board_info([t])
-    return {"task": t, "actions": mirror.available_actions(t, tasks_db.list_stages(task_id))}
+    stages = tasks_db.list_stages(task_id)
+    return {"task": t, "actions": mirror.available_actions(t, stages) + mirror.summary_action(t, stages)}
+
+
+class SummaryBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+@router.post("/{task_id}/summary")
+def save_summary(task_id: int, body: SummaryBody):
+    """The lead saves its plain-language summary; status bar and details show it."""
+    t = tasks_db.set_user_summary(task_id, redact(body.text))
+    if not t:
+        raise HTTPException(404, "task not found")
+    return t
+
+
+@router.post("/{task_id}/summary/request")
+def request_summary(task_id: int):
+    """The user's tap: the task chat's lead writes the summary now."""
+    t = tasks_db.get_task(task_id)
+    if not t:
+        raise HTTPException(404, "task not found")
+    mirror._post(projects.task_channel_id(projects.current().id, task_id), "message",
+                 {"text": mirror.summary_prompt(t, tasks_db.list_stages(task_id)),
+                  "note": f"Lead fasst #{task_id} zusammen …"})
+    return {"requested": True}
 
 
 class OfferBody(BaseModel):

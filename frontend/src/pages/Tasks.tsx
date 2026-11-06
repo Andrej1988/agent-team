@@ -1237,6 +1237,13 @@ export default function Tasks({ initialTaskId }: { initialTaskId?: number } = {}
                 </div>
               )}
 
+              {selected?.user_summary && !streamOpen && (
+                <div className="mt-1 rounded border border-sky-800/60 bg-sky-950/20 p-3">
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-sky-400">Zusammenfassung</div>
+                  <div className="whitespace-pre-wrap break-words text-sm text-slate-200">{selected.user_summary}</div>
+                </div>
+              )}
+
               {selected?.execute_summary && !streamOpen && (
                 <div className="mt-1 rounded border border-emerald-900/60 bg-emerald-950/30 p-3">
                   <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-500">

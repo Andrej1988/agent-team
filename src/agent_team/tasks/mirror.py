@@ -230,6 +230,55 @@ phone, exactly these three points:
 No English, no further sections. Change nothing (no API writes)."""
 
 
+SUMMARY_PROMPT = """[Automatic message, not typed by the user] Task #{id} {moment}.
+
+Read the task and its stages (API in your rules; the stage summaries, the diff
+if there is one). Write the user a simple summary in German: plain words, no
+code names or file paths unless they matter, short enough for a phone. Exactly:
+{sections}
+Research without code: say what came out instead of what was built.
+First save exactly this text with the "save summary" route from your rules,
+then answer with it. Change nothing else."""
+
+_SUMMARY_DONE = """- **Umgesetzt:** 2 to 4 points, what is different now.
+- **Geprüft:** what was tested and how it went, one or two lines.
+- **Offen:** what is left for the user (e.g. take over, deploy), or „nichts“."""
+_SUMMARY_RELEASE = """- **Umgesetzt:** 2 to 4 points, what is different now.
+- **Geprüft:** what was tested and how it went, one or two lines.
+- **Bei Freigabe passiert:** what goes live, which services restart, the risk and
+  the way back, in one or two lines."""
+
+
+def summary_prompt(task: dict, stages: list[dict]) -> str:
+    release = _next_confirm(task, stages)
+    return SUMMARY_PROMPT.format(
+        id=task["id"], sections=_SUMMARY_RELEASE if release else _SUMMARY_DONE,
+        moment=f"waits for the user's release approval ({_role_label(release['role'])})" if release
+        else "is finished" if task["status"] == "done" else "needs a summary of where it stands")
+
+
+def _next_confirm(task: dict, stages: list[dict]) -> Optional[dict]:
+    """The live stage the user is asked to approve right now, if any."""
+    if task["status"] != "plan_ready" or task.get("paused_reason"):
+        return None
+    nxt = next((s for s in stages if s["status"] == "pending"), None)
+    return nxt if nxt is not None and nxt["role"] in agent_roles.CONFIRM_ROLES else None
+
+
+def summary_request(task: dict, stages: list[dict], old: Optional[dict]) -> Optional[dict]:
+    """Before a release approval and when a task finishes, the lead writes what
+    happened in simple words — the stage texts are for the team (user
+    2026-11-06). Not when the user ticks a stopped task off by hand."""
+    if old is None or not any(s["status"] == "done" for s in stages):
+        return None
+    tid, before = task["id"], old.get("status")
+    if _next_confirm(task, stages) is not None and (before != "plan_ready" or old.get("paused")):
+        return {"text": summary_prompt(task, stages), "note": f"Lead fasst #{tid} vor der Freigabe zusammen …"}
+    if task["status"] == "done" and before in ("planning", "running", "plan_ready"):
+        return {"text": summary_prompt(task, stages), "note": f"Lead fasst #{tid} zusammen …"}
+    return None
+
+
 def explain_request(task: dict, old: Optional[dict]) -> Optional[dict]:
     """When a task just stopped or failed, the task chat's lead explains in
     German what came out, what is missing and which way out it recommends —
@@ -309,6 +358,15 @@ def available_actions(task: dict, stages: list[dict]) -> list[dict]:
     if last is not None and last["status"] == "failed" and last["role"] not in agent_roles.GATE_ROLES:
         out.append(_action(f"Stufe {last['seq']} überspringen", f"skip:{tid}:{last['seq']}"))
     return out + replan + ending
+
+
+def summary_action(task: dict, stages: list[dict]) -> list[dict]:
+    """Status bar only: tasks from before summaries, or the automatic one did
+    not arrive."""
+    if (task["status"] in ("plan_ready", "blocked", "failed", "limit_reached", "done") and not task.get("user_summary")
+            and any(s["status"] == "done" for s in stages)):
+        return [_action("Zusammenfassung schreiben lassen", f"summarize:{task['id']}")]
+    return []
 
 
 def button_rows(actions: list[dict]) -> list[list[dict]]:
@@ -409,7 +467,7 @@ def tick() -> None:
                 continue
             for a in changes(task, stages, state.get(key)):
                 _post(ch.id, "alert", {**a, "source": "pipeline"})
-            ask = explain_request(task, state.get(key))
+            ask = explain_request(task, state.get(key)) or summary_request(task, stages, state.get(key))
             if ask:
                 _post(ch.id, "message", ask)
         state[key] = snap

@@ -242,6 +242,8 @@ def _ensure_db() -> Path:
             # ("Zur Freigabe") and why (lead_note; also the park reason).
             cx.execute("ALTER TABLE tasks ADD COLUMN proposed_at TEXT")
             cx.execute("ALTER TABLE tasks ADD COLUMN lead_note TEXT")
+        if "user_summary" not in cols:
+            cx.execute("ALTER TABLE tasks ADD COLUMN user_summary TEXT")
         # Tasks v2: no simple-mode execute any more; two autopilot levels.
         cx.execute("UPDATE tasks SET status='failed', error='Execute entfällt (Tasks v2) — "
                    "bitte als Pipeline starten' WHERE status='executing'")
@@ -623,6 +625,14 @@ def move_to_backlog(task_id: int) -> Optional[dict]:
         )
         if cur.rowcount == 0:
             return None
+    return get_task(task_id)
+
+
+def set_user_summary(task_id: int, text: str) -> Optional[dict]:
+    """The plain-language summary for the user (task chat, task details);
+    execute_summary stays the technical record for lead and scouts."""
+    with _connect() as cx:
+        cx.execute("UPDATE tasks SET user_summary=? WHERE id=?", (text, task_id))
     return get_task(task_id)
 
 

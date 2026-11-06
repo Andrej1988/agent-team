@@ -99,6 +99,8 @@ export const api = {
   lead: {
     get: (project: string, id: number) => get<Task>(`/p/${project}/api/tasks/${id}`),
     actions: (project: string, id: number) => get<TaskActions>(`/p/${project}/api/tasks/${id}/actions`),
+    summarize: (project: string, id: number) =>
+      send<{ requested: boolean }>(`/p/${project}/api/tasks/${id}/summary/request`, 'POST'),
     skip: (project: string, id: number, seq: number) =>
       send<Task>(`/p/${project}/api/tasks/${id}/stages/${seq}/skip`, 'POST'),
     stop: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/stop`, 'POST'),
@@ -409,6 +411,7 @@ export interface Task {
   // Tasks v2 lead: recommended for start ("Zur Freigabe") and why / park reason.
   proposed_at?: string | null
   lead_note?: string | null
+  user_summary?: string | null
 }
 
 // GET /api/tasks/board: open tasks + recently done, with stage progress.

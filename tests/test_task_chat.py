@@ -256,3 +256,28 @@ def test_button_rows_keep_the_confirm_and_drop_the_kind():
                                {"label": "d", "data": "stop:1", "kind": "danger", "confirm": "sicher?"}])
     assert rows == [[{"label": "a", "data": "next:1"}], [{"label": "b", "data": "x:1"}, {"label": "c", "data": "y:1"}],
                     [{"label": "d", "data": "stop:1", "confirm": "sicher?"}]]
+
+
+def test_lead_summarises_before_release_and_at_the_end(lead_project):
+    done = {"seq": 1, "role": "implementation-engineer", "status": "done", "verdict": "pass"}
+    deploy = {"seq": 2, "role": "integration-ops", "status": "pending"}
+    running = {"status": "running", "paused": "", "stages": {}}
+    ask = mirror.summary_request(_task("plan_ready"), [done, deploy], running)
+    assert "Bei Freigabe passiert" in ask["text"] and "vor der Freigabe" in ask["note"]
+    ask = mirror.summary_request(_task("done"), [done], running)
+    assert "**Offen:**" in ask["text"]
+    # once per state; nothing for a plain next stage, a pause, or a task ticked off by hand
+    assert mirror.summary_request(_task("plan_ready"), [done, deploy], {"status": "plan_ready", "paused": ""}) is None
+    impl = {"seq": 2, "role": "implementation-engineer", "status": "pending"}
+    assert mirror.summary_request(_task("plan_ready"), [done, impl], running) is None
+    assert mirror.summary_request(_task("plan_ready", paused_reason="Budget: x"), [done, deploy], running) is None
+    assert mirror.summary_request(_task("done"), [done], {"status": "blocked", "paused": ""}) is None
+    # budget pause over: the approval is new, so the summary comes now
+    assert mirror.summary_request(_task("plan_ready"), [done, deploy], {"status": "plan_ready", "paused": "Budget: x"})
+
+
+def test_summary_can_be_requested_until_there_is_one(lead_project):
+    done = {"seq": 1, "role": "implementation-engineer", "status": "done", "verdict": "pass"}
+    assert _data(mirror.summary_action(_task("blocked"), [done])) == ["summarize:5"]
+    assert mirror.summary_action(_task("blocked", user_summary="x"), [done]) == []
+    assert mirror.summary_action(_task("running"), [done]) == []

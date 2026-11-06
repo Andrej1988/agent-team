@@ -178,6 +178,8 @@ agents' own messages (author = role). You are not one of those stages — you
 explain and steer for the user:
   task + stages   GET  {api}/{id}   and   GET {api}/{id}/stages
   stage log       /data/projects/<project>/sessions/{id}/stage_<seq>.jsonl
+  save summary    POST {api}/{id}/summary {{"text": "..."}}  (shown in the status
+                  bar and task details; when an automatic message asks for one)
   answer a stage question (the user tells you the answer)
                   POST {api}/{id}/stages/<seq>/answer {{"text": "..."}}
   re-plan with the user's wishes (they wrote them here, or tapped „Neu planen

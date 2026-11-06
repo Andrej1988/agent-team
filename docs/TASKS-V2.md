@@ -54,6 +54,12 @@ Karten, Statusleiste und Lead-Angebote nutzen diese eine Liste, damit kein Knopf
 fehlt oder ins Leere geht. Der Task-Chat zeigt sie oben als feste **Statusleiste**.
 Eine offene Karte gilt als überholt, sobald keiner ihrer Knöpfe mehr möglich ist.
 
+**Zusammenfassung:** Vor jeder Release-Freigabe und wenn ein Task fertig ist,
+schreibt der Lead im Task-Chat in einfachen Worten, was umgesetzt und geprüft
+wurde und was die Freigabe auslöst bzw. was offen ist. Der Text steht auch in der
+Statusleiste und in den Task-Details (`user_summary`; `execute_summary` bleibt die
+technische Fassung). Fehlt er, gibt es den Knopf „Zusammenfassung schreiben lassen“.
+
 **Knöpfe vom Lead:** `POST .../tasks/<id>/offer` mit `text` und `actions` postet
 eine Karte. Der Agent wählt nur aus den möglichen Aktionen aus, die Beschriftung
 kommt vom Server, und ausgeführt wird erst beim Tipp des Users. Damit bekommt ein

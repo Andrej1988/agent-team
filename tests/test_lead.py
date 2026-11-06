@@ -247,3 +247,13 @@ def test_actions_endpoint_gives_state_and_ways_out(app_client, monkeypatch):
     b = r.json()
     assert b["task"]["id"] == t and "board" in b["task"] and b["actions"][0]["data"] == f"start:{t}"
     assert c.get("/p/demo/api/tasks/99999/actions").status_code == 404
+
+
+def test_summary_is_saved_apart_from_the_technical_one(app_client, monkeypatch):
+    mod, c, _ = app_client
+    monkeypatch.setattr(mod, "_internal_client", lambda r: True)
+    t = db.create_task("x", "d", 2, [])["id"]
+    r = c.post(f"/p/demo/api/tasks/{t}/summary", json={"text": "Umgesetzt: alles"})
+    assert r.status_code == 200 and r.json()["user_summary"] == "Umgesetzt: alles"
+    assert not db.get_task(t)["execute_summary"]
+    assert c.post("/p/demo/api/tasks/99999/summary", json={"text": "x"}).status_code == 404
