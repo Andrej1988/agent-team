@@ -174,6 +174,8 @@ function QuestionCard({ ev, open, channel, onDelete }: { ev: ChatEvent; open: bo
 }
 
 // Padded so the tap target is finger-sized; the negative margin keeps the layout tight.
+const INPUT_MAX_PX = 200
+
 // Button names for the regular duties (scout ids in team.yaml).
 const DUTY_LABEL: Record<string, string> = {
   research: 'Research', reliability: 'Reliability', 'order-ids': 'Order-IDs', tests: 'Tests',
@@ -473,6 +475,14 @@ export default function Chat() {
   const followRef = useRef(true)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  // The input grows with its text; only a very long message scrolls inside it.
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight + 2, INPUT_MAX_PX)}px`
+    el.style.overflowY = el.scrollHeight + 2 > INPUT_MAX_PX ? 'auto' : 'hidden'
+  }, [text])
   // Seqs deleted in this view; ignored if the live stream delivers them again.
   const goneRef = useRef<Set<number>>(new Set())
 
@@ -956,8 +966,9 @@ export default function Chat() {
             // Enter is a new line; Ctrl/Cmd+Enter or the button sends (as in the task editor).
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); sendMsg() } }}
             enterKeyHint="enter"
-            placeholder={service ? 'Befehl an den Dienst, z. B. /status …' : busy ? 'Nachricht fügt sich in den laufenden Turn ein …' : 'Nachricht … (Screenshot: einfügen oder hierher ziehen)'}
-            className="max-h-40 min-h-[40px] flex-1 resize-y rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" />
+            // Short enough for one line on a phone: a wrapped placeholder made the field scroll.
+            placeholder={service ? 'Befehl, z. B. /status …' : busy ? 'Ergänzung …' : 'Nachricht …'}
+            className="min-h-[40px] min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" />
           <button onClick={sendMsg} disabled={sending || (!text.trim() && images.length === 0)}
             className="mb-0.5 rounded-lg bg-sky-600 p-2.5 text-white disabled:opacity-40" aria-label="Senden">
             {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
