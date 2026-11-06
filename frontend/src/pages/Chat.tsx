@@ -177,6 +177,8 @@ function QuestionCard({ ev, open, channel, onDelete }: { ev: ChatEvent; open: bo
 
 // Padded so the tap target is finger-sized; the negative margin keeps the layout tight.
 const INPUT_MAX_PX = 200
+// Touch is the primary input (phone, tablet), whatever else is attached.
+const TOUCH_INPUT = () => window.matchMedia('(pointer: coarse)').matches
 
 // Button names for the regular duties (scout ids in team.yaml).
 const DUTY_LABEL: Record<string, string> = {
@@ -1014,9 +1016,10 @@ export default function Chat() {
           {!service && <button onClick={() => fileRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Bild anhängen"><ImagePlus size={20} /></button>}
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
           <textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} rows={1} onPaste={onPaste}
-            // Enter is a new line; Ctrl/Cmd+Enter or the button sends (as in the task editor).
-            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); sendMsg() } }}
-            enterKeyHint="enter"
+            // Desktop: Enter sends, Shift+Enter is a new line. Phone: no Shift, so Enter is a
+            // new line and the button sends. Never while an IME is composing.
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !TOUCH_INPUT()) { e.preventDefault(); sendMsg() } }}
+            enterKeyHint={TOUCH_INPUT() ? 'enter' : 'send'}
             // Short enough for one line on a phone: a wrapped placeholder made the field scroll.
             placeholder={service ? 'Befehl, z. B. /status …' : busy ? 'Ergänzung …' : 'Nachricht …'}
             className="min-h-[40px] min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" />
