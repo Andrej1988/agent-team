@@ -48,6 +48,19 @@ Drag & Drop gibt es absichtlich nicht, denn die Übergänge sind geschützt.
 Backlog, alle Erledigten und Geschlossen sind eigene Tabs. Daten:
 `GET /p/<projekt>/api/tasks/board`.
 
+**Aktionen:** `GET /p/<projekt>/api/tasks/<id>/actions` liefert den Stand eines
+Tasks und alles, was der User gerade tun kann (`mirror.available_actions`).
+Karten, Statusleiste und Lead-Angebote nutzen diese eine Liste, damit kein Knopf
+fehlt oder ins Leere geht. Der Task-Chat zeigt sie oben als feste **Statusleiste**.
+Eine offene Karte gilt als überholt, sobald keiner ihrer Knöpfe mehr möglich ist.
+
+**Knöpfe vom Lead:** `POST .../tasks/<id>/offer` mit `text` und `actions` postet
+eine Karte. Der Agent wählt nur aus den möglichen Aktionen aus, die Beschriftung
+kommt vom Server, und ausgeführt wird erst beim Tipp des Users. Damit bekommt ein
+Agent kein neues Recht. „Neu planen mit Hinweis“: Der Lead schreibt den Wunsch in
+die Details des Tasks, denn der Planer liest den Chat nicht, und bietet dann
+`replan` an.
+
 ## Lead-Kanal und Chat pro Task
 
 **Vor der Freigabe** wird im **Lead-Kanal des Projekts** (`<projekt>-lead`)

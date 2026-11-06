@@ -48,7 +48,7 @@ def test_propose_posts_card_and_shows_zur_freigabe(app_client, monkeypatch):
     assert r.json()["proposed_at"] and r.json()["lead_note"] == "lohnt sich, weil …"
     method, path, body = calls[-1]
     assert path == "/channels/demo-lead/alert"
-    assert [b["data"] for row in body["buttons"] for b in row] == [f"start:{tid}", f"discuss:{tid}", f"park:{tid}"]
+    assert [b["data"] for row in body["buttons"] for b in row] == [f"start:{tid}", f"discuss:{tid}", f"park:{tid}", f"close:{tid}"]
 
 
 def test_agents_cannot_start_a_task(app_client, monkeypatch):
@@ -216,3 +216,34 @@ def test_board_groups_open_and_recent_done(app_client, monkeypatch):
     assert ids[new]["board"]["stages"] is None and ids[fresh]["board"]["pending_apply"] is False
     assert b["counts"]["backlog"] == 1 and b["counts"]["done"] == 2
     assert b["lead_channel"] == "demo-lead"
+
+
+def test_offer_shows_buttons_but_runs_nothing(app_client, monkeypatch):
+    mod, c, calls = app_client
+    monkeypatch.setattr(mod, "_internal_client", lambda r: True)   # an agent calls
+    t = db.create_task("Meiner", "vom User", 2, [])["id"]
+    # an agent may not close the user's task, but it may offer the button
+    r = c.post(f"/p/demo/api/tasks/{t}/offer", json={"text": "überholt", "actions": ["close", "merge"]})
+    assert r.status_code == 200, r.text
+    _, path, body = calls[-1]
+    assert path == "/channels/demo-lead/alert"
+    assert [b["data"] for row in body["buttons"] for b in row] == [f"close:{t}"]
+    assert body["buttons"][0][0]["label"].startswith("Schließen")
+    assert db.get_task(t)["status"] == "new"
+    # what the state does not allow is refused, with what is possible
+    r = c.post(f"/p/demo/api/tasks/{t}/offer", json={"text": "x", "actions": ["retry"]})
+    assert r.status_code == 409 and "start" in r.json()["detail"]
+    # only chats of this project
+    r = c.post(f"/p/demo/api/tasks/{t}/offer", json={"text": "x", "actions": ["close"], "channel": "fremd"})
+    assert r.status_code == 400
+
+
+def test_actions_endpoint_gives_state_and_ways_out(app_client, monkeypatch):
+    mod, c, _ = app_client
+    monkeypatch.setattr(mod, "_internal_client", lambda r: True)
+    t = db.create_task("x", "d", 2, [])["id"]
+    r = c.get(f"/p/demo/api/tasks/{t}/actions")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["task"]["id"] == t and "board" in b["task"] and b["actions"][0]["data"] == f"start:{t}"
+    assert c.get("/p/demo/api/tasks/99999/actions").status_code == 404

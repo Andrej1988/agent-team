@@ -120,7 +120,7 @@ def test_question_with_options_becomes_buttons_and_answers(lead_project, monkeyp
     stages = [{"seq": 4, "role": "test-engineer", "status": "awaiting_input", "questions": res.questions,
                "options": res.options}]
     card = mirror.changes(task, stages, {"status": "running", "paused": "", "stages": {"4": ["running", ""]}})[0]
-    assert [r[0]["data"] for r in card["buttons"]] == ["opt:9:4:0", "opt:9:4:1"]
+    assert [r[0]["data"] for r in card["buttons"]][:2] == ["opt:9:4:0", "opt:9:4:1"]
     assert "1. Stufe darf sie selbst ausführen" in card["text"]
 
 
@@ -159,14 +159,14 @@ def test_stopped_task_card_offers_ways_out(lead_project):
     stages = [{"seq": 1, "role": "implementation-engineer", "status": "done", "verdict": "pass", "summary": "ok"},
               {"seq": 2, "role": "reviewer", "status": "done", "verdict": "blocked", "summary": "fehlt was"}]
     card = mirror.stuck_card(task, stages, "⛔ Gestoppt", task["stop_reason"])
-    assert [b["data"] for row in card["buttons"] for b in row] == ["retry:131:2", "replan:131", "done:131", "close:131"]
+    assert [b["data"] for row in card["buttons"] for b in row] == ["retry:131:2", "replan:131", "replannote:131", "done:131", "close:131"]
     assert "Was jetzt?" in card["text"] and "exit criteria unmet" in card["text"]
     stages[1].update(verdict="fail")
     card = mirror.stuck_card(task, stages, "⛔ Gestoppt", "x")
     assert card["buttons"][0][0]["data"] == "retry:131:2"
     stages[1].update(verdict="pass")
     card = mirror.stuck_card(task, stages, "⛔ Gestoppt", "x")
-    assert [b["data"] for row in card["buttons"] for b in row] == ["replan:131", "done:131", "close:131"]
+    assert [b["data"] for row in card["buttons"] for b in row] == ["replan:131", "replannote:131", "done:131", "close:131"]
     out = mirror.changes(task, stages, {"status": "running", "paused": "", "stages": mirror.snapshot(task, stages)["stages"]})
     assert out[-1]["title"] == "⛔ Gestoppt" and out[-1]["buttons"]
 
@@ -199,3 +199,60 @@ def test_stopped_task_gets_a_german_explanation_once(lead_project):
     failed = mirror.explain_request({"id": 7, "status": "failed", "error": "boom"}, running)
     assert "fehlgeschlagen" in failed["note"] and "boom" in failed["text"]
     assert mirror.explain_request({"id": 7, "status": "done"}, running) is None
+
+
+def _data(actions):
+    return [a["data"] for a in actions]
+
+
+def _task(status, **kw):
+    return {"id": 5, "status": status, "mode": "pipeline", "paused_reason": None, "repos": [], **kw}
+
+
+def test_every_stuck_or_waiting_state_has_a_way_out(lead_project):
+    impl = {"seq": 1, "role": "implementation-engineer", "status": "done", "verdict": "pass"}
+    deploy = {"seq": 2, "role": "integration-ops", "status": "pending", "goal": "live"}
+    review = {"seq": 2, "role": "reviewer", "status": "done", "verdict": "fail"}
+    # approval of a live stage: not the only answer any more
+    a = mirror.available_actions(_task("plan_ready"), [impl, deploy])
+    assert a[0]["data"] == "next:5" and a[0]["label"].endswith("freigeben") and a[0]["kind"] == "primary"
+    assert {"skip:5:2", "replan:5", "replannote:5", "done:5", "close:5"} <= set(_data(a))
+    # a reviewer's fail at the stop can be rerun, a gate stage never skipped
+    a = _data(mirror.available_actions(_task("blocked"), [impl, review]))
+    assert a[0] == "retry:5:2" and not any(d.startswith("skip:") for d in a)
+    # question: answers plus leaving it
+    q = {"seq": 2, "role": "data-engineer", "status": "awaiting_input", "options": ["A", "B"]}
+    a = mirror.available_actions(_task("awaiting_input"), [impl, q])
+    assert _data(a) == ["opt:5:2:0", "opt:5:2:1", "skip:5:2", "stop:5"] and a[-1]["confirm"]
+    # stopped by the user with stages left
+    assert "resume:5" in _data(mirror.available_actions(_task("blocked"), [impl, deploy]))
+    # running: only stopping, and it asks first
+    a = mirror.available_actions(_task("running"), [impl])
+    assert _data(a) == ["stop:5"] and a[0]["confirm"]
+    # budget pause: may go on by hand; a time wait may not
+    assert "next:5" in _data(mirror.available_actions(_task("plan_ready", paused_reason="Budget: Tag"), [impl, deploy]))
+    assert "next:5" not in _data(mirror.available_actions(_task("plan_ready", paused_reason="Wartet bis 2026"), [impl, deploy]))
+    assert mirror.available_actions(_task("closed"), [])[0]["data"] == "restore:5"
+
+
+def test_limit_gets_a_card(lead_project):
+    task = _task("limit_reached", error="limit")
+    stages = [{"seq": 1, "role": "reviewer", "status": "failed", "error": "limit"}]
+    old = {"status": "running", "paused": "", "stages": mirror.snapshot(task, stages)["stages"]}
+    card = mirror.changes(task, stages, old)[-1]
+    assert card["title"].startswith("⏳") and card["buttons"][0][0]["data"] == "retry:5:1"
+
+
+def test_stopped_task_with_branch_offers_taking_it_over(lead_project, monkeypatch):
+    monkeypatch.setattr(mirror, "worktree_state", lambda tid: {"pending": True, "repos": {}})
+    stages = [{"seq": 1, "role": "implementation-engineer", "status": "done", "verdict": "pass"}]
+    assert "apply:5" in _data(mirror.available_actions(_task("blocked"), stages))
+
+
+def test_button_rows_keep_the_confirm_and_drop_the_kind():
+    rows = mirror.button_rows([{"label": "a", "data": "next:1", "kind": "primary"},
+                               {"label": "b", "data": "x:1", "kind": "secondary"},
+                               {"label": "c", "data": "y:1", "kind": "secondary"},
+                               {"label": "d", "data": "stop:1", "kind": "danger", "confirm": "sicher?"}])
+    assert rows == [[{"label": "a", "data": "next:1"}], [{"label": "b", "data": "x:1"}, {"label": "c", "data": "y:1"}],
+                    [{"label": "d", "data": "stop:1", "confirm": "sicher?"}]]

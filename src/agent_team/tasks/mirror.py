@@ -172,12 +172,10 @@ def changes(task: dict, stages: list[dict], old: Optional[dict]) -> list[dict]:
             qs = s.get("questions") or []
             q = "\n".join(f"• {x.get('question') if isinstance(x, dict) else x}" for x in qs) or _short(s.get("summary"))
             opts = [str(o) for o in (s.get("options") or [])][:4]
-            card = {"title": f"❓ {label} fragt"}
+            card = {"title": f"❓ {label} fragt", "buttons": button_rows(available_actions(task, stages))}
             if opts:
                 listed = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(opts))
                 card["text"] = f"{q}\n\n{listed}\n\nTipp eine Antwort an — oder schreib hier, der Lead gibt es weiter."
-                card["buttons"] = [[{"label": (f"{i + 1}. {o}" if len(o) <= 56 else f"{i + 1}. {o[:54]}…"),
-                                     "data": f"opt:{tid}:{seq}:{i}"}] for i, o in enumerate(opts)]
             else:
                 card["text"] = f"{q}\n\nAntworte hier — der Lead gibt es weiter."
             out.append(card)
@@ -196,11 +194,11 @@ def changes(task: dict, stages: list[dict], old: Optional[dict]) -> list[dict]:
                         + ("\n\nVorher spielt der Worker Branch task/%d in den Live-Ordner ein; deployt wird aus "
                            "diesem Stand (ohne Push)." % tid if worktree_state(tid) is not None
                            else "\n\nDanach committet diese Stufe die Änderungen des Tasks (ohne Push)."),
-                        "buttons": [[{"label": f"{label} freigeben", "data": f"next:{tid}"}]]})
+                        "buttons": button_rows(available_actions(task, stages))})
         elif nxt is not None:
             out.append({"title": f"⏸ Wartet auf dich: Stufe {nxt['seq']} · {_role_label(nxt['role'])}",
                         "text": _short(nxt.get("goal"), 400) or "nächste Stufe",
-                        "buttons": [[{"label": "Nächste Stufe starten", "data": f"next:{tid}"}]]})
+                        "buttons": button_rows(available_actions(task, stages))})
     elif paused and paused != (old or {}).get("paused"):
         out.append({"title": "⏸ Pausiert", "text": paused})
     elif status == "blocked":
@@ -209,6 +207,8 @@ def changes(task: dict, stages: list[dict], old: Optional[dict]) -> list[dict]:
         out.append(done_card(task, stages))
     elif status == "failed":
         out.append(stuck_card(task, stages, "✗ Fehler", task.get("error") or "Fehler"))
+    elif status == "limit_reached":
+        out.append(stuck_card(task, stages, "⏳ Nutzungslimit erreicht", task.get("error") or "Nutzungslimit erreicht"))
     return out
 
 
@@ -223,9 +223,10 @@ phone, exactly these three points:
 2. **Warum gestoppt:** in plain words — a stage could not continue, a limit,
    or only a formal rule (e.g. a research question answered, just negatively,
    or the last stage was not a review). Say whether it is a real problem.
-3. **Empfehlung:** one of the buttons on the card above — „Stufe erneut
-   versuchen“, „Neu planen lassen“, „Als erledigt abhaken“ or „Schließen“ —
-   and why; for re-planning, what should be different.
+3. **Empfehlung:** one of the buttons on the card above or in the status bar
+   of this chat — e.g. „Stufe erneut versuchen“, „Ergebnis übernehmen“, „Neu
+   planen lassen“, „Als erledigt abhaken“ or „Schließen“ — and why; for
+   re-planning, what should be different.
 No English, no further sections. Change nothing (no API writes)."""
 
 
@@ -244,23 +245,103 @@ def explain_request(task: dict, old: Optional[dict]) -> Optional[dict]:
             "note": f"Lead schaut sich an, warum #{task['id']} {'gestoppt' if status == 'blocked' else 'fehlgeschlagen'} ist …"}
 
 
+def _action(label: str, data: str, kind: str = "secondary", confirm: Optional[str] = None) -> dict:
+    out = {"label": label, "data": data, "kind": kind}
+    if confirm:
+        out["confirm"] = confirm
+    return out
+
+
+def available_actions(task: dict, stages: list[dict]) -> list[dict]:
+    """Everything the user can do with the task right now, most useful first.
+    The one list behind the cards, the task chat's status bar and the lead's
+    offers, so none of them shows a way out the backend refuses or misses one
+    it allows. ``data`` is what a tap sends (Chat.tsx pressButton)."""
+    tid, status = task["id"], task["status"]
+    if status == "refining":
+        return []
+    if status in ("planning", "running"):
+        return [_action("Task stoppen", f"stop:{tid}", "danger",
+                        "Task stoppen? Die laufende Stufe gilt dann als abgebrochen.")]
+    if status == "done":
+        steps = [b for row in done_card(task, stages)["buttons"] for b in row]
+        return [_action(b["label"], b["data"], "primary" if i == 0 and len(steps) > 1 else "secondary")
+                for i, b in enumerate(steps)]
+    if status in ("closed", "backlog"):
+        return [_action("Wieder öffnen", f"restore:{tid}")]
+    ending = [_action("Als erledigt abhaken", f"done:{tid}"),
+              _action("Schließen – wird nicht gemacht", f"close:{tid}")]
+    if status in ("new", "refined") or (not stages and task.get("mode") != "pipeline"):
+        return [_action("Freigeben & starten", f"start:{tid}", "primary"),
+                _action("Ins Backlog", f"park:{tid}"), *ending]
+    replan = [_action("Neu planen lassen", f"replan:{tid}"),
+              _action("Neu planen mit Hinweis", f"replannote:{tid}")]
+    asking = next((s for s in stages if s["status"] == "awaiting_input"), None)
+    if asking is not None and status in ("awaiting_input", "plan_ready"):
+        seq = asking["seq"]
+        out = [_action(f"{i + 1}. {o}" if len(o) <= 56 else f"{i + 1}. {o[:54]}…", f"opt:{tid}:{seq}:{i}", "primary")
+               for i, o in enumerate(str(x) for x in (asking.get("options") or [])[:4])]
+        if asking["role"] not in agent_roles.GATE_ROLES:
+            out.append(_action(f"Stufe {seq} überspringen", f"skip:{tid}:{seq}"))
+        return out + [_action("Task stoppen", f"stop:{tid}", "danger", "Task stoppen?")]
+    nxt = next((s for s in stages if s["status"] == "pending"), None)
+    if status == "plan_ready":
+        out = []
+        paused = task.get("paused_reason") or ""
+        if not paused:
+            confirm = nxt is not None and nxt["role"] in agent_roles.CONFIRM_ROLES
+            label = f"{_role_label(nxt['role'])} freigeben" if confirm else "Nächste Stufe starten" if nxt else "Weiter"
+            out.append(_action(label, f"next:{tid}", "primary"))
+        elif paused.startswith("Budget"):
+            out.append(_action("Trotzdem jetzt weiter", f"next:{tid}", "primary"))
+        if nxt is not None and nxt["role"] not in agent_roles.GATE_ROLES:
+            out.append(_action(f"Stufe {nxt['seq']} überspringen", f"skip:{tid}:{nxt['seq']}"))
+        return out + replan + ending
+    # blocked / failed / limit_reached
+    out = []
+    last = next((s for s in reversed(stages) if s["status"] not in ("pending", "skipped")), None)
+    if last is not None and tasks_db.stage_retryable(status, last, stages):
+        out.append(_action(f"Stufe {last['seq']} erneut versuchen", f"retry:{tid}:{last['seq']}", "primary"))
+    if status == "blocked" and nxt is not None and not any(s["status"] in ("failed", "awaiting_input") for s in stages):
+        out.append(_action("Weitermachen", f"resume:{tid}", "primary"))
+    if (worktree_state(tid) or {}).get("pending"):
+        out.append(_action("Ergebnis übernehmen (mergen, ohne Deploy)", f"apply:{tid}", "primary"))
+    if last is not None and last["status"] == "failed" and last["role"] not in agent_roles.GATE_ROLES:
+        out.append(_action(f"Stufe {last['seq']} überspringen", f"skip:{tid}:{last['seq']}"))
+    return out + replan + ending
+
+
+def button_rows(actions: list[dict]) -> list[list[dict]]:
+    """Card buttons: main ways out on their own row, the rest two per row."""
+    rows: list[list[dict]] = []
+    pair: list[dict] = []
+    for a in actions:
+        b = {k: a[k] for k in ("label", "data", "confirm") if k in a}
+        if a.get("kind") == "primary":
+            rows.append([b])
+            continue
+        pair.append(b)
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    return rows + ([pair] if pair else [])
+
+
 def stuck_card(task: dict, stages: list[dict], title: str, why: str) -> dict:
     """Stopped / failed task: say why and offer every way out as a button —
     a card without one left the task sitting there (user 2026-10-29)."""
-    tid = task["id"]
-    rows, hints = [], []
-    last = next((s for s in reversed(stages) if s["status"] not in ("pending", "skipped")), None)
-    if last is not None and tasks_db.stage_retryable(task.get("status") or "", last, stages):
-        rows.append([{"label": f"Stufe {last['seq']} erneut versuchen", "data": f"retry:{tid}:{last['seq']}"}])
-        hints.append(f"Erneut versuchen: Stufe {last['seq']} ({_role_label(last['role'])}) läuft noch einmal — "
-                     "sinnvoll, wenn das Hindernis inzwischen behoben ist.")
-    rows.append([{"label": "Neu planen lassen", "data": f"replan:{tid}"}])
-    hints.append("Neu planen: der Planer sieht den Stand und schlägt die fehlenden Schritte vor.")
-    rows.append([{"label": "Als erledigt abhaken", "data": f"done:{tid}"},
-                 {"label": "Schließen – wird nicht gemacht", "data": f"close:{tid}"}])
+    actions = available_actions(task, stages)
+    kinds = {a["data"].split(":")[0]: a for a in actions}
+    hints = []
+    if "retry" in kinds:
+        hints.append(f"{kinds['retry']['label']}: sinnvoll, wenn das Hindernis inzwischen behoben ist.")
+    if "apply" in kinds:
+        hints.append("Ergebnis übernehmen: holt den Stand des Task-Branches in den Live-Ordner, auch wenn der Task gestoppt ist.")
+    hints.append("Neu planen: der Planer sieht den Stand und schlägt die fehlenden Schritte vor. "
+                 "Mit Hinweis: du schreibst dazu, was anders laufen soll.")
     hints.append("Oder frag hier im Chat, was los ist.")
     return {"title": title, "text": _short(why, 900) + "\n\nWas jetzt?\n" + "\n".join(f"· {h}" for h in hints),
-            "buttons": rows}
+            "buttons": button_rows(actions)}
 
 
 def worktree_state(task_id: int) -> Optional[dict]:

@@ -96,6 +96,7 @@ class QuestionAnswer(BaseModel):
 class Button(BaseModel):
     label: str = Field(..., min_length=1, max_length=64)
     data: str = Field(..., min_length=1, max_length=64)
+    confirm: Optional[str] = Field(None, max_length=200)  # asked before the tap counts
 
 
 class Alert(BaseModel):

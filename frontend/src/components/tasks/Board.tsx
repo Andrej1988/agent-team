@@ -30,7 +30,7 @@ const FOLDED = 8 // Todo / Erledigt show this many until "+ n weitere"
 
 type Step = { icon: JSX.Element; text: string; tone: string }
 
-function nextStep(t: BoardTask): Step | null {
+export function nextStep(t: BoardTask): Step | null {
   const cur = t.board?.stages?.current
   const total = t.board?.stages?.total
   const at = cur && total ? ` · Stufe ${cur.index}/${total}` : ''
@@ -151,7 +151,7 @@ export default function Board({ tasks, selectedId, onSelect, chatFor, leadChanne
     const l = laneOf(t)
     const chat = chatFor(t)
     if (l === 'wartet') return chat ? { label: t.status === 'awaiting_input' || t.status === 'plan_ready' ? 'Im Chat antworten' : 'Im Chat ansehen', to: `/chat/${chat}` } : null
-    if (l === 'freigabe') return leadChannel ? { label: 'Mit Lead besprechen', to: `/chat/${leadChannel}` } : null
+    if (l === 'freigabe') return leadChannel ? { label: 'Mit Lead besprechen', to: `/chat/${leadChannel}?draft=${encodeURIComponent(`Lass uns #${t.id} besprechen: `)}` } : null
     if (l === 'arbeit') return chat ? { label: 'Verlauf', to: `/chat/${chat}` } : null
     return null
   }

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Archive, ArrowLeft, Check, ChevronDown, ChevronRight, CircleHelp, Copy, ImagePlus, Search, Loader2, Quote, RotateCcw, Send,
   Settings2, ShieldAlert, Square, Trash2, TriangleAlert, Wrench, X,
 } from 'lucide-react'
-import { api, type CatalogModel, type ChatChannel, type ChatEvent, type ChatQuestion, type ServiceButton, type ServiceChannel, type Task } from '../api/client'
+import TaskStatusBar from '../components/tasks/TaskStatusBar'
+import { CARD_TASK, cardOutdated, taskMovedOn } from '../components/tasks/cards'
+import { api, type CatalogModel, type ChatChannel, type ChatEvent, type ChatQuestion, type ServiceButton, type ServiceChannel, type Task, type TaskActions } from '../api/client'
 
 // ---- helpers -----------------------------------------------------------------
 
@@ -183,20 +185,6 @@ const DUTY_LABEL: Record<string, string> = {
   backtest: 'Backtest-Audit', watchdog: 'Auswertung', 'product-owner': 'Produkt-Durchsicht',
   'qa-tester': 'App-Test', legal: 'Rechtsprüfung', review: 'Review',
 }
-
-// A lead card's task no longer waits for a decision (started from elsewhere,
-// finished, closed, parked, deleted — e.g. in the chat with the lead): what
-// happened to it, instead of buttons that 409.
-function taskMovedOn(t: Task): string | null {
-  if (t.status === 'done') return `#${t.id} schon erledigt`
-  if (t.status === 'closed') return `#${t.id} geschlossen`
-  if (t.status === 'backlog') return `#${t.id} im Backlog`
-  if (t.mode === 'pipeline') return `#${t.id} läuft bereits`
-  return null
-}
-// The task a lead card is about: proposal (start:<id>) or tidy card
-// (park/close/done/delete/keep:<id>, merge:<id>:<into>).
-const CARD_TASK = /^(?:start|park|close|done|delete|keep|merge):(\d+)/
 
 // Clipboard API needs a secure context; the textarea trick covers the rest.
 async function copyText(text: string): Promise<void> {
@@ -575,6 +563,7 @@ export default function Chat() {
     const id = e.buttons?.flat().map((x) => CARD_TASK.exec(x.data)?.[1]).find(Boolean)
     return id ? [`${e.seq}:${id}`] : []
   }).slice(-30).join(','), [events, cardDone, pressed])
+  const [taskState, setTaskState] = useState<TaskActions | null>(null)
   useEffect(() => {
     if (!info?.lead || !info.project || !startCards) return
     let off = false
@@ -582,7 +571,8 @@ export default function Chat() {
     Promise.all(startCards.split(',').map(async (c) => {
       const [seq, id] = c.split(':').map(Number)
       try {
-        return [seq, taskMovedOn(await api.lead.get(project, id))] as const
+        const buttons = events.find((e) => e.seq === seq)?.buttons?.flat() ?? []
+        return [seq, cardOutdated(await api.lead.actions(project, id), buttons)] as const
       } catch (e) {
         return [seq, String(e).includes('404') ? `#${id} gelöscht` : null] as const
       }
@@ -593,7 +583,30 @@ export default function Chat() {
       setStaleCards(out)
     })
     return () => { off = true }
-  }, [info?.lead, info?.project, startCards])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- events only to read the listed cards
+  }, [info?.lead, info?.project, startCards, taskState?.task.status, taskState?.task.updated_at])
+  // Status bar of a task chat: state and every action possible right now.
+  const taskId = info?.task_id ?? null
+  const refreshTask = useCallback(() => {
+    if (taskId == null || !info?.project) return
+    api.lead.actions(info.project, taskId).then(setTaskState, () => {})
+  }, [taskId, info?.project])
+  useEffect(() => { setTaskState(null) }, [channel])
+  const newestSeq = events.length ? events[events.length - 1].seq : 0
+  useEffect(() => { refreshTask() }, [refreshTask, newestSeq])
+  useEffect(() => {
+    const iv = window.setInterval(() => { if (!document.hidden) refreshTask() }, 10000)
+    return () => window.clearInterval(iv)
+  }, [refreshTask])
+  // ?draft=… (board „Mit Lead besprechen“): prefilled message, the task named.
+  const [search, setSearch] = useSearchParams()
+  useEffect(() => {
+    const draft = search.get('draft')
+    if (!draft) return
+    setText((t) => t || draft)
+    setSearch({}, { replace: true })
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }, [search, setSearch])
   const [leadRequested, setLeadRequested] = useState(false)
   useEffect(() => { setLeadRequested(false) }, [channel])
   // The lead's summary ("Lead: n zur Freigabe …", source lead:<id>) ends the wait.
@@ -659,12 +672,29 @@ export default function Chat() {
     } catch (e) { setError(String(e)) }
   }
   const pressButton = async (ev: ChatEvent, b: ServiceButton) => {
+    if (b.confirm && !window.confirm(b.confirm)) return
+    const seq = ev.seq || undefined   // status bar: no card behind the tap
     try {
+      if (/^replannote:\d+$/.test(b.data)) {
+        // The lead adds my wishes to the task, then offers the re-plan button.
+        setText((t) => t || 'Bitte neu planen. Das soll anders laufen: ')
+        setTimeout(() => inputRef.current?.focus(), 0)
+        return
+      }
+      if (/^askfix:\d+$/.test(b.data)) {
+        const id = b.data.slice(7)
+        await api.service.command(channel, { text: b.data, label: b.label, button_seq: seq })
+        await api.chat.message(channel, { text: `Das Übernehmen von Task #${id} ist fehlgeschlagen. Finde heraus, woran es liegt `
+          + '(lokale Änderungen im Live-Ordner, Konflikt, Branch-Stand), und sag mir in einfachen Worten, was los ist und was du empfiehlst. '
+          + 'Fremde Änderungen fasst du nicht an und verwirfst nichts. Ist der Weg frei, biete mir „apply“ als Karte an.' })
+        followRef.current = true
+        return
+      }
       // Lead channel card: run the action (start = my approval) on the
       // channel's project first; the command event only records the tap.
       if (/^commit:\d+$/.test(b.data)) {
         // The task chat's lead commits the task's files (TASK_CHAT_RULES).
-        await api.service.command(channel, { text: b.data, label: b.label, button_seq: ev.seq })
+        await api.service.command(channel, { text: b.data, label: b.label, button_seq: seq })
         await api.chat.message(channel, { text: `Bitte committe jetzt die Änderungen von Task #${b.data.slice(7)} (nur die Dateien dieses Tasks, kein Push).` })
         followRef.current = true
         return
@@ -673,7 +703,7 @@ export default function Chat() {
         // The task chat's lead deploys what the merged changes need (TASK_CHAT_RULES);
         // the message carries the rules too, for a chat process started before them.
         const id = b.data.slice(7)
-        await api.service.command(channel, { text: b.data, label: b.label, button_seq: ev.seq })
+        await api.service.command(channel, { text: b.data, label: b.label, button_seq: seq })
         await api.chat.message(channel, { text: `Bitte deploye jetzt, was Task #${id} braucht: Prüfe, welche Dienste/Images/Skripte `
           + 'die übernommenen Änderungen betreffen, und baue bzw. starte nur diese neu, über den Deploy-Weg des Repos. '
           + 'Ist nichts zu deployen (z. B. ein Skript, das live gelesen wird), sag das. Kein Push. '
@@ -694,7 +724,7 @@ export default function Chat() {
           }
         }
         await toggleArchive(true)
-        await api.service.command(channel, { text: b.data, label: label.slice(0, 64), button_seq: ev.seq })
+        await api.service.command(channel, { text: b.data, label: label.slice(0, 64), button_seq: seq })
         return
       }
       // The recorded tap says what happened, not just what was tapped.
@@ -742,6 +772,16 @@ export default function Chat() {
         await api.lead.retry(info.project, Number(rt[1]), Number(rt[2]))
         done = `Stufe ${rt[2]} läuft erneut`
       }
+      const sk = /^skip:(\d+):(\d+)$/.exec(b.data)
+      if (!service && sk && info?.project) {
+        await api.lead.skip(info.project, Number(sk[1]), Number(sk[2]))
+        done = `Stufe ${sk[2]} übersprungen`
+      }
+      const st = /^(stop|resume|restore):(\d+)$/.exec(b.data)
+      if (!service && st && info?.project) {
+        await api.lead[st[1] as 'stop' | 'resume' | 'restore'](info.project, Number(st[2]))
+        done = st[1] === 'stop' ? 'gestoppt' : st[1] === 'resume' ? 'wartet auf die nächste Stufe' : 'wieder offen'
+      }
       const rp = /^replan:(\d+)$/.exec(b.data)
       if (!service && rp && info?.project) {
         await api.lead.start(info.project, Number(rp[1]))   // POST /plan re-plans a blocked task
@@ -779,9 +819,10 @@ export default function Chat() {
         }
       }
       const label = done ? `${b.label} → ${done}` : b.label
-      await api.service.command(channel, { text: b.data, label: label.slice(0, 64), button_seq: ev.seq })
+      await api.service.command(channel, { text: b.data, label: label.slice(0, 64), button_seq: seq })
       followRef.current = true
-    } catch (e) { setError(String(e)) }
+      refreshTask()
+    } catch (e) { setError(String(e)); refreshTask() }
   }
   const alertCount = useMemo(() => events.filter((e) => e.type === 'alert').length, [events])
 
@@ -906,6 +947,9 @@ export default function Chat() {
           onChanged={loadInfo} onDeleteAlerts={deleteAllAlerts} onClear={clearHistory} />
       )}
 
+      {taskState && !service && (
+        <TaskStatusBar state={taskState} onAction={(b) => pressButton({ seq: 0, type: 'alert', ts: '' } as unknown as ChatEvent, b)} />
+      )}
       <div ref={scrollerRef} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2"
         onScroll={(e) => { const el = e.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
         {error && <div className="my-2 text-xs text-rose-300">{error}</div>}

@@ -142,6 +142,15 @@ Tasks API (internal, no auth): {api}
                   user's own tasks ask them)
   merge           POST {api}/<id>/merge   {{"into": <id>, "note": "..."}} (folds it in, closes it)
   budget          GET  {base}/api/budget
+  offer buttons   POST {api}/<id>/offer {{"text": "why", "actions": ["replan", ...], "channel": "{channel}"}}
+                  -> card with those buttons in this chat; the user taps, you
+                  run nothing. Names: start, next, retry, skip, resume, replan,
+                  apply, park, done, close, restore. Only what the task's state
+                  allows is shown; a 409 lists what is possible.
+
+Whenever something is the user's to do (start, close their task, retry, take
+over a branch, approve the next stage), offer it as a card right here instead
+of telling them to do it in the app.
 
 Discussing a proposal (the user taps "Besprechen" — their message quotes the
 card): read the task, ask what you need to know, and work their wishes into
@@ -152,8 +161,8 @@ it again (POST propose with the updated note) — that posts a fresh card;
 say that the start button is on the new card.
 
 Rules:
-- You can NOT start a task (the start route refuses agents) — propose it and
-  let the user tap the button. Never try to work around that.
+- You can NOT start a task (the start route refuses agents) — propose it or
+  offer the button and let the user tap it. Never try to work around that.
 - Propose only what fits the weekly budget; say so when it doesn't.
 - Park only scout proposals (details end with "(Vorschlag des Scouts …)");
   tasks the user wrote stay — suggest parking them instead.
@@ -171,8 +180,13 @@ explain and steer for the user:
   stage log       /data/projects/<project>/sessions/{id}/stage_<seq>.jsonl
   answer a stage question (the user tells you the answer)
                   POST {api}/{id}/stages/<seq>/answer {{"text": "..."}}
-  change the not-yet-run stages / limits: tell the user to use "Details" in
+  re-plan with the user's wishes (they wrote them here, or tapped „Neu planen
+  mit Hinweis“): append them to the task — PATCH {api}/{id} with the existing
+  details plus a section "Hinweis zum Neuplanen: …" (the planner reads the
+  details, not this chat) — then offer "replan".
+  change single not-yet-run stages / limits: tell the user to use "Details" in
   the task (plan editor) — you do not edit the plan.
+The chat has a status bar on top with the task's state and all current actions.
 Do not edit the repo yourself in this chat; changes go through the pipeline.
 Own branch: if /data/projects/<project>/control/worktrees/{id}.json exists,
 the stages worked in their own worktree on branch task/{id} and the worker
@@ -476,7 +490,7 @@ class ChannelRuntime:
                 log.warning("[%s] persona %s not readable", self.ch.id, self.ch.persona)
         if self.ch.lead:
             base = f"{WEB_INTERNAL_URL}/p/{self.ch.project}"
-            parts += [LEAD_RULES.format(api=f"{base}/api/tasks", base=base)]
+            parts += [LEAD_RULES.format(api=f"{base}/api/tasks", base=base, channel=self.ch.id)]
             if self.ch.task_id is not None:
                 parts += [TASK_CHAT_RULES.format(id=self.ch.task_id, api=f"{base}/api/tasks")]
             # The lead's state is the task list, not the repo's SESSION.md

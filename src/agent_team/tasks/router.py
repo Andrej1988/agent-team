@@ -417,22 +417,25 @@ def list_tasks(status: Optional[str] = None):
     return tasks_db.list_tasks(status=status)
 
 
+def _add_board_info(rows: list[dict]) -> None:
+    progress = tasks_db.stage_progress([t["id"] for t in rows])
+    for t in rows:
+        p = progress.get(t["id"])
+        cur = (p or {}).get("current")
+        if cur:
+            cur["label"] = mirror._role_label(cur["role"])
+            cur["confirm"] = cur["role"] in agent_roles.CONFIRM_ROLES
+        st = mirror.worktree_state(t["id"]) if t["status"] == "done" else None
+        t["board"] = {"stages": p, "pending_apply": bool(st and st.get("pending"))}
+
+
 @router.get("/board")
 def task_board(done_days: int = 7):
     """Kanban board: the open tasks plus those done in the last
     ``done_days`` days, each with its stage progress and (done) whether the branch still
     waits for "Übernehmen"; counts for the folded-away statuses."""
     rows = tasks_db.list_tasks() + tasks_db.recent_done(min(max(done_days, 0), 90))
-    progress = tasks_db.stage_progress([t["id"] for t in rows])
-    confirm = agent_roles.CONFIRM_ROLES
-    for t in rows:
-        p = progress.get(t["id"])
-        cur = (p or {}).get("current")
-        if cur:
-            cur["label"] = mirror._role_label(cur["role"])
-            cur["confirm"] = cur["role"] in confirm
-        st = mirror.worktree_state(t["id"]) if t["status"] == "done" else None
-        t["board"] = {"stages": p, "pending_apply": bool(st and st.get("pending"))}
+    _add_board_info(rows)
     lead = projects.lead_channel(projects.current().id)
     return {"tasks": rows, "counts": tasks_db.status_counts(),
             "lead_channel": lead.id if lead else None}
@@ -567,11 +570,56 @@ async def propose_task(task_id: int, body: ProposeBody):
                 "source": "lead",
                 "buttons": [[{"label": "Freigeben & starten", "data": f"start:{task_id}"}],
                             [{"label": "Besprechen", "data": f"discuss:{task_id}"},
-                             {"label": "Ins Backlog", "data": f"park:{task_id}"}]],
+                             {"label": "Ins Backlog", "data": f"park:{task_id}"},
+                             {"label": "Schließen", "data": f"close:{task_id}"}]],
             })
         except HTTPException:
             pass  # chat service down: the task still shows "Zur Freigabe"
     return t
+
+
+@router.get("/{task_id}/actions")
+def task_actions(task_id: int):
+    """The task's state and what the user can do now (status bar of the task
+    chat; open cards compare their buttons against it)."""
+    t = tasks_db.get_task(task_id)
+    if not t:
+        raise HTTPException(404, "task not found")
+    _add_board_info([t])
+    return {"task": t, "actions": mirror.available_actions(t, tasks_db.list_stages(task_id))}
+
+
+class OfferBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=3000)
+    actions: list[str] = Field(..., min_length=1, max_length=8)
+    channel: Optional[str] = Field(None, max_length=200)
+
+
+@router.post("/{task_id}/offer")
+async def offer_actions(task_id: int, body: OfferBody):
+    """An agent offers the user ways forward as a card. It only picks which of
+    the task's available actions to show: the labels are ours and nothing
+    runs until the user taps, so this adds no right to start, close or merge."""
+    t = tasks_db.get_task(task_id)
+    if not t:
+        raise HTTPException(404, "task not found")
+    available = mirror.available_actions(t, tasks_db.list_stages(task_id))
+    picked = [a for a in available if a["data"].split(":")[0] in set(body.actions)]
+    if not picked:
+        names = sorted({a["data"].split(":")[0] for a in available})
+        raise HTTPException(409, f"none of these is possible in status '{t['status']}'; available: {names}")
+    pid = projects.current().id
+    lead = projects.lead_channel(pid)
+    own = {c.id for c in projects.task_channels() if c.project == pid} | ({lead.id} if lead else set())
+    default = projects.task_channel_id(pid, task_id)
+    channel = body.channel or (default if default in own else lead.id if lead else None)
+    if channel not in own:
+        raise HTTPException(400, f"cannot post a card to {channel!r}")
+    from ..chat import web as chat_web  # late: chat.web imports this router's package
+    await chat_web._forward("POST", f"/channels/{channel}/alert", {
+        "title": f"Vorschlag zu #{task_id}: {t['title']}"[:200], "text": redact(body.text), "source": "lead",
+        "buttons": mirror.button_rows(picked)})
+    return {"posted": channel, "actions": [a["data"] for a in picked]}
 
 
 class MergeBody(BaseModel):

@@ -98,6 +98,12 @@ export const api = {
   // project, then is recorded in the transcript via service.command.
   lead: {
     get: (project: string, id: number) => get<Task>(`/p/${project}/api/tasks/${id}`),
+    actions: (project: string, id: number) => get<TaskActions>(`/p/${project}/api/tasks/${id}/actions`),
+    skip: (project: string, id: number, seq: number) =>
+      send<Task>(`/p/${project}/api/tasks/${id}/stages/${seq}/skip`, 'POST'),
+    stop: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/stop`, 'POST'),
+    resume: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/resume`, 'POST'),
+    restore: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/restore`, 'POST'),
     start: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/plan`, 'POST'),
     park: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/backlog`, 'POST'),
     close: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/close`, 'POST'),
@@ -289,7 +295,9 @@ export interface ChatQuestion {
   options: { label: string; description: string }[]
 }
 
-export interface ServiceButton { label: string; data: string }
+export interface ServiceButton { label: string; data: string; confirm?: string }
+export interface TaskAction extends ServiceButton { kind: 'primary' | 'secondary' | 'danger' }
+export interface TaskActions { task: BoardTask; actions: TaskAction[] }
 export interface ServiceChannel { id: string; menu: [string, string][] }
 
 export interface ChatEvent {

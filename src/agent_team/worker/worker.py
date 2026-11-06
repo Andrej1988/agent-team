@@ -1307,9 +1307,10 @@ def _workspace_tick() -> None:
             log.warning("[task %s] apply failed: %s", tid, e)
             _notify_task(tid, "✗ Übernehmen fehlgeschlagen",
                          f"{e}\n\nDer Live-Ordner ist unverändert (außer den oben als übernommen genannten Repos). "
-                         "Bei einem Konflikt: im Task unter Details eine Umsetzungs-Stufe „Branch auf den Live-Stand "
-                         "rebasen, Konflikt lösen“ anhängen und starten, danach erneut übernehmen.",
-                         [[{"label": "Erneut übernehmen", "data": f"apply:{tid}"}]])
+                         "Der Lead kann prüfen, woran es liegt (lokale Änderungen im Live-Ordner, Konflikt) und "
+                         "was zu tun ist. Ist das Hindernis weg: erneut übernehmen.",
+                         [[{"label": "Lead soll das klären", "data": f"askfix:{tid}"}],
+                          [{"label": "Erneut übernehmen", "data": f"apply:{tid}"}]])
     if time.monotonic() - _ws_sweep_last < 600:
         return
     _ws_sweep_last = time.monotonic()
