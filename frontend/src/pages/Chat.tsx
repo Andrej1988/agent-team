@@ -5,7 +5,7 @@ import {
   Settings2, ShieldAlert, Square, Trash2, TriangleAlert, Wrench, X,
 } from 'lucide-react'
 import TaskStatusBar from '../components/tasks/TaskStatusBar'
-import { CARD_TASK, cardOutdated, taskMovedOn } from '../components/tasks/cards'
+import { CARD_TASK, cardOutdated, mentionedActions, taskMovedOn } from '../components/tasks/cards'
 import { api, type CatalogModel, type ChatChannel, type ChatEvent, type ChatQuestion, type ServiceButton, type ServiceChannel, type Task, type TaskActions } from '../api/client'
 
 // ---- helpers -----------------------------------------------------------------
@@ -833,6 +833,15 @@ export default function Chat() {
       refreshTask()
     } catch (e) { setError(String(e)); refreshTask() }
   }
+  // The steps the lead's last answer names, as buttons right below it. The
+  // actions are the live ones, so nothing here can be out of date.
+  const suggestion = useMemo(() => {
+    if (busy || !taskState) return null
+    const last = [...events].reverse().find((e) => e.type === 'assistant' && !e.author)
+    if (!last?.text || events.some((e) => e.seq > last.seq && e.type === 'user')) return null
+    const actions = mentionedActions(last.text, taskState.actions)
+    return actions.length ? { seq: last.seq, actions } : null
+  }, [events, taskState, busy])
   const alertCount = useMemo(() => events.filter((e) => e.type === 'alert').length, [events])
 
   // Deleting hides events (server keeps the transcript); drop them locally too.
@@ -957,7 +966,7 @@ export default function Chat() {
       )}
 
       {taskState && !service && (
-        <TaskStatusBar state={taskState} onAction={(b) => pressButton({ seq: 0, type: 'alert', ts: '' } as unknown as ChatEvent, b)} />
+        <TaskStatusBar state={taskState} onAction={(b) => pressButton({ seq: 0 } as ChatEvent, b)} />
       )}
       <div ref={scrollerRef} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2"
         onScroll={(e) => { const el = e.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
@@ -975,6 +984,16 @@ export default function Chat() {
                 ev={{ ...b.ev, outcome: b.ev.req_id ? openReqs.outcome[b.ev.req_id] : undefined }}
                 open={!!b.ev.req_id && openReqs.open.has(b.ev.req_id)} />
               {b.tools.length > 0 && <ToolsBlock events={b.tools} onDelete={deleteSeqs} />}
+              {b.ev.seq === suggestion?.seq && (
+                <div className="my-2 flex flex-wrap gap-1.5">
+                  {suggestion.actions.map((a) => (
+                    <button key={a.data} onClick={() => pressButton({ seq: 0 } as ChatEvent, a)}
+                      className="min-h-[40px] flex-1 rounded-lg border border-amber-500/60 bg-slate-900 px-3 py-2 text-sm text-amber-100">
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         {busy && <div className="my-2 flex items-center gap-1.5 text-xs text-slate-400"><Loader2 size={13} className="animate-spin" /> arbeitet …</div>}

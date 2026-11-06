@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cardOutdated, taskMovedOn } from './cards.ts'
+import { cardOutdated, mentionedActions, taskMovedOn } from './cards.ts'
 
 const stopped = { id: 158, status: 'blocked', mode: 'pipeline' }
 const b = (...data) => data.map((d) => ({ data: d }))
@@ -31,4 +31,13 @@ test('a tidy card stays until the task is finished', () => {
 test('before a start tap a pipeline task counts as moved on', () => {
   assert.match(taskMovedOn(stopped), /läuft bereits/)
   assert.equal(taskMovedOn({ id: 2, status: 'new', mode: 'single' }), null)
+})
+
+test('an answer that tells me to tap something brings the button along', () => {
+  const actions = b('retry:57:7', 'replan:57', 'replannote:57', 'done:57', 'close:57')
+  const said = 'Für dich noch offen: Tippe bei Task #57 auf „Als erledigt abhaken“, das kann ich nicht für dich tun.'
+  assert.deepEqual(mentionedActions(said, actions).map((a) => a.data), ['done:57'])
+  assert.deepEqual(mentionedActions('Der Fix ist live, die Tests sind grün.', actions), [])
+  // only what is possible now
+  assert.deepEqual(mentionedActions(said, b('stop:57')), [])
 })
