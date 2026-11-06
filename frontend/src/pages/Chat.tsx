@@ -953,9 +953,9 @@ export default function Chat() {
           {!service && <button onClick={() => fileRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Bild anhängen"><ImagePlus size={20} /></button>}
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
           <textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} rows={1} onPaste={onPaste}
-            // Enter sends, Shift+Enter is a new line (not while an IME is composing).
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); sendMsg() } }}
-            enterKeyHint="send"
+            // Enter is a new line; Ctrl/Cmd+Enter or the button sends (as in the task editor).
+            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); sendMsg() } }}
+            enterKeyHint="enter"
             placeholder={service ? 'Befehl an den Dienst, z. B. /status …' : busy ? 'Nachricht fügt sich in den laufenden Turn ein …' : 'Nachricht … (Screenshot: einfügen oder hierher ziehen)'}
             className="max-h-40 min-h-[40px] flex-1 resize-y rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" />
           <button onClick={sendMsg} disabled={sending || (!text.trim() && images.length === 0)}
