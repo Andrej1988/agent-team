@@ -206,7 +206,7 @@ async def _run_agent(prompt: str, model: Optional[str], cwd: str,
                      mcp_config: Optional[Path] = None) -> tuple[str, dict[str, int]]:
     """Run one headless session; returns (final text, tool-use counts)."""
     cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
-           "--disallowedTools", "Write", "Edit", "NotebookEdit"]
+           "--disallowedTools", "Write", "Edit", "NotebookEdit", *pipeline.HEADLESS_DISALLOWED_TOOLS]
     if model:
         cmd += ["--model", model]
     settings = guard.cli_settings()

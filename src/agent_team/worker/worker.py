@@ -485,6 +485,20 @@ async def _safe_append(task_id: int, kind: str, event: dict) -> None:
         )
 
 
+def headless_hooks() -> dict:
+    """PreToolUse hooks for worker runs: the deploy guard (if configured) and
+    no background Bash — nobody resumes the agent once its turn is over."""
+    from claude_agent_sdk import HookMatcher
+
+    async def no_background(input_data: dict, tool_use_id, context):
+        if ((input_data or {}).get("tool_input") or {}).get("run_in_background"):
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": pipeline.NO_BACKGROUND_REASON}}
+        return {}
+
+    return {"PreToolUse": [*guard.sdk_matchers(), HookMatcher(matcher="Bash", hooks=[no_background])]}
+
+
 async def _run_agent_session(
     task: dict,
     *,
@@ -499,6 +513,7 @@ async def _run_agent_session(
     complete_field: str,
     backend: str | None = None,
     on_session: "callable[[str, str], object] | None" = None,
+    require_marker: str | None = None,
 ) -> tuple[str | None, str]:
     """Drive one Claude session for a task, streaming events as <kind>.jsonl
     and posting the extracted final section to the monitoring backend on
@@ -532,72 +547,87 @@ async def _run_agent_session(
     client = ClaudeSDKClient(options=options)
     try:
         await client.connect()
-        await client.query(prompt)
-        async for msg in client.receive_response():
-            if isinstance(msg, SystemMessage) and msg.subtype == "init":
-                data = msg.data or {}
-                model = data.get("model")
-                sid = data.get("session_id")
-                # Persist the Claude SDK session_id so the user can reply
-                # to a refined task and we resume the same conversation.
-                # Only meaningful for refine — execute is single-shot.
-                if kind == "refine" and sid and task.get("session_id") != sid:
-                    try:
-                        await asyncio.to_thread(
-                            tasks_api.set_session_id, tid, sid, "claude"
-                        )
-                        task["session_id"] = sid
-                        task["session_backend"] = "claude"
-                    except Exception:
-                        log.exception("[task %s] failed to persist session_id", tid)
-                elif on_session is not None and sid:
-                    try:
-                        await asyncio.to_thread(on_session, sid, "claude")
-                    except Exception:
-                        log.exception("[task %s] %s: failed to persist session_id", tid, kind)
-                await _safe_append(tid, kind, _event("init", model=model, session_id=sid))
-            elif isinstance(msg, AssistantMessage):
-                for blk in msg.content:
-                    if isinstance(blk, TextBlock):
-                        text = blk.text.rstrip()
-                        if text:
-                            final_text_parts.append(text)
-                            await _safe_append(tid, kind, _event("text", text=text))
-                    elif isinstance(blk, ToolUseBlock):
-                        await _safe_append(
-                            tid, kind, _event("tool_use", **_serialise_tool_use(blk))
-                        )
-                    elif isinstance(blk, ThinkingBlock):
-                        await _safe_append(tid, kind, _event("thinking"))
-            elif isinstance(msg, UserMessage):
-                for blk in getattr(msg, "content", []) or []:
-                    if isinstance(blk, ToolResultBlock):
-                        await _safe_append(
-                            tid, kind, _event("tool_result", **_serialise_tool_result(blk))
-                        )
-            elif isinstance(msg, ResultMessage):
-                budget.record_cost(getattr(msg, "total_cost_usd", None), f"{PROJECT_ID}:task-{tid}:{kind}")
-                result_meta = {
-                    "is_error": bool(getattr(msg, "is_error", False)),
-                    "subtype": getattr(msg, "subtype", None),
-                    "stop_reason": getattr(msg, "stop_reason", None),
-                    "api_error_status": getattr(msg, "api_error_status", None),
-                    "terminal_reason": getattr(msg, "terminal_reason", None),
-                }
-                usage = getattr(msg, "usage", None)
-                await _safe_append(
-                    tid,
-                    kind,
-                    _event(
-                        "result",
-                        duration_ms=getattr(msg, "duration_ms", None),
-                        num_turns=getattr(msg, "num_turns", None),
-                        cost_usd=getattr(msg, "total_cost_usd", None),
-                        usage=dict(usage) if isinstance(usage, dict) else None,
-                        backend="claude",
-                        **result_meta,
-                    ),
-                )
+        pending: str | None = prompt
+        nudged = False
+        while pending is not None:
+            await client.query(pending)
+            pending = None
+            async for msg in client.receive_response():
+                if isinstance(msg, SystemMessage) and msg.subtype == "init":
+                    data = msg.data or {}
+                    model = data.get("model")
+                    sid = data.get("session_id")
+                    # Persist the Claude SDK session_id so the user can reply
+                    # to a refined task and we resume the same conversation.
+                    # Only meaningful for refine — execute is single-shot.
+                    if kind == "refine" and sid and task.get("session_id") != sid:
+                        try:
+                            await asyncio.to_thread(
+                                tasks_api.set_session_id, tid, sid, "claude"
+                            )
+                            task["session_id"] = sid
+                            task["session_backend"] = "claude"
+                        except Exception:
+                            log.exception("[task %s] failed to persist session_id", tid)
+                    elif on_session is not None and sid:
+                        try:
+                            await asyncio.to_thread(on_session, sid, "claude")
+                        except Exception:
+                            log.exception("[task %s] %s: failed to persist session_id", tid, kind)
+                    await _safe_append(tid, kind, _event("init", model=model, session_id=sid))
+                elif isinstance(msg, AssistantMessage):
+                    for blk in msg.content:
+                        if isinstance(blk, TextBlock):
+                            text = blk.text.rstrip()
+                            if text:
+                                final_text_parts.append(text)
+                                await _safe_append(tid, kind, _event("text", text=text))
+                        elif isinstance(blk, ToolUseBlock):
+                            await _safe_append(
+                                tid, kind, _event("tool_use", **_serialise_tool_use(blk))
+                            )
+                        elif isinstance(blk, ThinkingBlock):
+                            await _safe_append(tid, kind, _event("thinking"))
+                elif isinstance(msg, UserMessage):
+                    for blk in getattr(msg, "content", []) or []:
+                        if isinstance(blk, ToolResultBlock):
+                            await _safe_append(
+                                tid, kind, _event("tool_result", **_serialise_tool_result(blk))
+                            )
+                elif isinstance(msg, ResultMessage):
+                    budget.record_cost(getattr(msg, "total_cost_usd", None), f"{PROJECT_ID}:task-{tid}:{kind}")
+                    result_meta = {
+                        "is_error": bool(getattr(msg, "is_error", False)),
+                        "subtype": getattr(msg, "subtype", None),
+                        "stop_reason": getattr(msg, "stop_reason", None),
+                        "api_error_status": getattr(msg, "api_error_status", None),
+                        "terminal_reason": getattr(msg, "terminal_reason", None),
+                    }
+                    usage = getattr(msg, "usage", None)
+                    await _safe_append(
+                        tid,
+                        kind,
+                        _event(
+                            "result",
+                            duration_ms=getattr(msg, "duration_ms", None),
+                            num_turns=getattr(msg, "num_turns", None),
+                            cost_usd=getattr(msg, "total_cost_usd", None),
+                            usage=dict(usage) if isinstance(usage, dict) else None,
+                            backend="claude",
+                            **result_meta,
+                        ),
+                    )
+            # A stage that ended its turn without the result block (typically
+            # "I'll report back" after starting something in the background)
+            # gets one nudge in the same session instead of a question to the user.
+            so_far = "\n\n".join(final_text_parts)
+            if (require_marker and not nudged and not result_meta.get("is_error")
+                    and require_marker not in so_far
+                    and not _limit_phrase_in_text(so_far, final_text_parts[-1] if final_text_parts else "")):
+                nudged = True
+                pending = pipeline.WAIT_NUDGE.format(marker=require_marker)
+                log.info("[task %s] %s ended without %r — nudging once", tid, kind, require_marker)
+                await _safe_append(tid, kind, _event("user_reply", text=pending))
     except Exception as e:
         if _is_limit_error(e):
             log.warning("[task %s] %s hit Anthropic usage limit: %s", tid, kind, e)
@@ -932,7 +962,7 @@ async def refine_one(task: dict) -> None:
         )
         opts = ClaudeAgentOptions(
             permission_mode="bypassPermissions",
-            hooks=guard.sdk_hooks(),
+            hooks=headless_hooks(),
             max_buffer_size=SDK_MAX_BUFFER_BYTES,
             cwd=CWD,
             model=refine_model,
@@ -942,7 +972,7 @@ async def refine_one(task: dict) -> None:
                 "preset": "claude_code",
                 "append": REFINE_SYSTEM + QUIET_NOTE,
             },
-            disallowed_tools=["Write", "Edit", "NotebookEdit", "Bash"],
+            disallowed_tools=["Write", "Edit", "NotebookEdit", "Bash", *pipeline.HEADLESS_DISALLOWED_TOOLS],
         )
         # Record the user's input in the JSONL so the SSE viewer can
         # render it inline with the agent's response.
@@ -954,7 +984,7 @@ async def refine_one(task: dict) -> None:
         prompt = _format_task_prompt(task)
         opts = ClaudeAgentOptions(
             permission_mode="bypassPermissions",
-            hooks=guard.sdk_hooks(),
+            hooks=headless_hooks(),
             max_buffer_size=SDK_MAX_BUFFER_BYTES,
             cwd=CWD,
             model=refine_model,
@@ -965,7 +995,7 @@ async def refine_one(task: dict) -> None:
             },
             # Refine is read-only by convention — keep the agent from
             # mutating the repo even if its prompt drifts.
-            disallowed_tools=["Write", "Edit", "NotebookEdit", "Bash"],
+            disallowed_tools=["Write", "Edit", "NotebookEdit", "Bash", *pipeline.HEADLESS_DISALLOWED_TOOLS],
         )
 
     # Reply we can't resume — the Codex runner always starts a fresh task
@@ -1069,7 +1099,7 @@ async def plan_one(task: dict) -> None:
     prompt = pipeline.build_plan_prompt(task, stages, catalog)
     opts = ClaudeAgentOptions(
         permission_mode="bypassPermissions",
-        hooks=guard.sdk_hooks(),
+        hooks=headless_hooks(),
         max_buffer_size=SDK_MAX_BUFFER_BYTES,
         cwd=str(WS.ws(tid)) if WS and WS.ws(tid).is_dir() else CWD,
         model=model,
@@ -1079,7 +1109,7 @@ async def plan_one(task: dict) -> None:
             "append": pipeline.role_system_prompt(role, None) + QUIET_NOTE,
         },
         # Planning is read-only by construction.
-        disallowed_tools=list(pipeline.ADVISE_DISALLOWED_TOOLS),
+        disallowed_tools=[*pipeline.ADVISE_DISALLOWED_TOOLS, *pipeline.HEADLESS_DISALLOWED_TOOLS],
     )
     await _run_agent_session(
         task,
@@ -1087,6 +1117,7 @@ async def plan_one(task: dict) -> None:
         prompt=prompt,
         options=opts,
         extract=lambda full: pipeline.extract_last_section(full, pipeline.PLAN_MARKER),
+        require_marker=pipeline.PLAN_MARKER,
         complete_fn=tasks_api.plan_complete,
         fail_fn=tasks_api.plan_fail,
         no_output_msg="Orchestrator produced no final text — nothing to save as plan.",
@@ -1181,7 +1212,7 @@ async def stage_one(task: dict, stage: dict) -> None:
     disallowed = pipeline.stage_disallowed_tools(role.kind, task, role.id, CONFIRM_ROLES)
     opt_kwargs: dict = dict(
         permission_mode="bypassPermissions",
-        hooks=guard.sdk_hooks(),
+        hooks=headless_hooks(),
         max_buffer_size=SDK_MAX_BUFFER_BYTES,
         cwd=cwd,
         model=model,
@@ -1192,8 +1223,7 @@ async def stage_one(task: dict, stage: dict) -> None:
             "append": pipeline.role_system_prompt(role, common) + QUIET_NOTE,
         },
     )
-    if disallowed:
-        opt_kwargs["disallowed_tools"] = disallowed
+    opt_kwargs["disallowed_tools"] = [*disallowed, *pipeline.HEADLESS_DISALLOWED_TOOLS]
     if can_resume:
         opt_kwargs["resume"] = sid
     opts = ClaudeAgentOptions(**opt_kwargs)
@@ -1210,6 +1240,7 @@ async def stage_one(task: dict, stage: dict) -> None:
         prompt=prompt,
         options=opts,
         extract=lambda full: pipeline.extract_last_section(full, pipeline.STAGE_RESULT_MARKER),
+        require_marker=pipeline.STAGE_RESULT_MARKER,
         complete_fn=_complete,
         fail_fn=_fail,
         no_output_msg="Agent produced no final text — nothing to save as stage result.",

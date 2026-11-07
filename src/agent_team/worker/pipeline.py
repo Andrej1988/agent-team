@@ -42,6 +42,24 @@ ADVISE_DISALLOWED_TOOLS: tuple[str, ...] = (
     "Bash(sed -i:*)", "Bash(rm:*)", "Bash(mv:*)",
 )
 
+# Headless runs: after the turn nothing wakes the agent up, so tools that
+# wait in the background (Monitor, wake-ups, background shells) leave a stage
+# saying "I'll report back" without a result. Disallowed for every run here;
+# background Bash is refused by a hook (worker.headless_hooks), and a stage that
+# still ends without its result block gets one automatic nudge (WAIT_NUDGE).
+HEADLESS_DISALLOWED_TOOLS: tuple[str, ...] = ("Monitor", "ScheduleWakeup", "CronCreate", "RemoteTrigger")
+NO_BACKGROUND_REASON = (
+    "No background jobs here: this run is headless and nothing wakes you up after your turn. "
+    "Run it in the foreground (Bash timeout up to 600000 ms; repeat the wait if it takes longer), "
+    "or start it detached with docker and wait for it in the foreground (`docker wait`, or a loop with a timeout)."
+)
+WAIT_NUDGE = (
+    "[Automatic message from the worker] Your turn ended without the `{marker}` block, so this stage "
+    "cannot finish. Nothing wakes you up after your turn: background jobs, Monitor and \"I'll report back\" "
+    "do not work here. If you are waiting for something, wait for it now in the foreground (Bash with a "
+    "timeout up to 600000 ms, repeated if needed), finish the work, and end with the `{marker}` block."
+)
+
 # Autopilot level that also chains implement stages on live-bot repos
 # (monitoring tasks_db._autopilot_allows). The price: every implement stage
 # of such a task is hands-off — no commits, nothing that touches a running
