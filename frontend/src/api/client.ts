@@ -74,7 +74,7 @@ export const api = {
     // "Prüfen" on an alert: opens the check chat (agent examines, recommends fix/delete).
     check: (c: string, seq: number) => send<{ channel: string }>(`/api/chat/${c}/check`, 'POST', { seq }),
     scouts: (project: string) =>
-      get<{ id: string; role: string; lead: boolean; report: boolean; last_run: number | null; requested: boolean }[]>(`/p/${project}/api/scouts`),
+      get<{ id: string; role: string; lead: boolean; report: boolean; channel?: string | null; last_run: number | null; requested: boolean }[]>(`/p/${project}/api/scouts`),
     runScout: (project: string, id: string) => send<{ requested: boolean }>(`/p/${project}/api/scouts/${id}/run`, 'POST'),
     newOptions: () => get<{ project: string; name: string; root: string; repos: string[] }[]>('/api/chat/new-options'),
     createCustom: (body: { project: string; repo: string; title: string; message?: string }) =>

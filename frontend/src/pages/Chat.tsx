@@ -184,6 +184,8 @@ const TOUCH_INPUT = () => window.matchMedia('(pointer: coarse)').matches
 const DUTY_LABEL: Record<string, string> = {
   research: 'Research', reliability: 'Reliability', 'order-ids': 'Order-IDs', tests: 'Tests',
   'data-quality': 'Datenqualität', logging: 'Logging', deps: 'Abhängigkeiten', conventions: 'Konventionen',
+  refactor: 'Refactor', security: 'Sicherheit', 'prospekt-stichprobe': 'Prospekt-Stichprobe',
+  'weekly-report': 'Wochenbericht',
   backtest: 'Backtest-Audit', watchdog: 'Auswertung', 'product-owner': 'Produkt-Durchsicht',
   'qa-tester': 'App-Test', legal: 'Rechtsprüfung', review: 'Review',
 }
@@ -624,9 +626,10 @@ export default function Chat() {
     } catch (e) { setError(String(e)) }
   }
   // Role chats (channel id = <project>-<role>, User 2026-11-01): one button per
-  // regular duty of that role (its scouts in team.yaml) to run it by hand. The
-  // watchdog chat runs its own evaluation; the lead chat also offers duties of
-  // the lead's role (e.g. a product owner's review).
+  // regular duty to run it by hand — every scout that reports into this chat
+  // (its `channel`, e.g. refactor and security in the reviewer chat, the weekly
+  // report in the lead chat) or belongs to this chat's role. The lead chat also
+  // offers duties of the lead's role (e.g. a product owner's review).
   const [duties, setDuties] = useState<string[]>([])
   const [requested, setRequested] = useState<Record<string, boolean>>({})
   useEffect(() => {
@@ -636,13 +639,13 @@ export default function Chat() {
     const suffix = info.id.slice(info.project.length + 1)
     api.chat.scouts(info.project).then((list) => {
       const leadRole = list.find((x) => x.lead)?.role
-      setDuties(list.filter((x) => !x.lead && !x.report
-        && (x.role === suffix || x.id === suffix || (info.lead && x.role === leadRole))).map((x) => x.id))
+      setDuties(list.filter((x) => !x.lead && (x.channel === info.id
+        || (!x.report && (x.role === suffix || x.id === suffix || (info.lead && x.role === leadRole))))).map((x) => x.id))
     }, () => {})
   }, [info?.id, info?.project, info?.lead, info?.task_id])
   // A duty's next report (source scout:<id>) ends its wait.
-  const dutyReports = useMemo(() => events.filter((e) => e.type === 'alert' && (e.source ?? '').startsWith('scout:'))
-    .map((e) => (e.source ?? '').slice(6)).join(','), [events])
+  const dutyReports = useMemo(() => events.filter((e) => e.type === 'alert' && /^(scout|report):/.test(e.source ?? ''))
+    .map((e) => (e.source ?? '').replace(/^(scout|report):/, '')).join(','), [events])
   useEffect(() => { setRequested({}) }, [dutyReports])
   const runDuty = async (sid: string) => {
     if (!info?.project) return

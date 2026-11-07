@@ -125,6 +125,7 @@ def test_run_lead_now_writes_trigger(app_client, monkeypatch, demo_project):
     monkeypatch.setattr(mod, "_internal_client", lambda r: False)
     monkeypatch.setattr(mod, "access_identity", lambda r: "me@example.com")
     ids = {s["id"]: s for s in c.get("/p/demo/api/scouts").json()}
+    assert all("channel" in s for s in ids.values())   # the chat it reports to gets the button
     assert ids["lead"]["lead"] is True
     assert c.post("/p/demo/api/scouts/nope/run").status_code == 404
     assert c.post("/p/demo/api/scouts/lead/run").json() == {"requested": True}

@@ -387,6 +387,7 @@ def list_scouts(project: str) -> list[dict]:
         except (OSError, ValueError):
             state = {}
         out.append({"id": sid, "role": s.get("role"), "lead": bool(s.get("lead")), "report": bool(s.get("report")),
+                    "channel": s.get("channel"),
                     "every_hours": s.get("every_hours"), "last_run": state.get("last_run"),
                     "last_error": state.get("last_error"), "requested": (control / f"{sid}.run").exists()})
     return out
