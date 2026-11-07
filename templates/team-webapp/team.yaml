@@ -58,6 +58,8 @@ roles:
   - id: lead
     is_stage: false
     description: Team lead — picks the next tasks for the user's approval in the lead channel. Not a stage.
+  - id: architect
+    description: Designs structural changes (target, small steps, proof of same behaviour) before the implementation.
   - id: implementation-engineer
     description: Implements features and bug fixes in the repo.
   - id: security-engineer
@@ -94,7 +96,7 @@ scouts:
     channel: webapp
   # Weekly: structure and architecture, not small clean-ups.
   - id: refactor
-    role: reviewer
+    role: architect
     every_hours: 168
     model: opus
     max_proposals: 2

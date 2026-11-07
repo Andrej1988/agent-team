@@ -257,3 +257,20 @@ def test_summary_is_saved_apart_from_the_technical_one(app_client, monkeypatch):
     assert r.status_code == 200 and r.json()["user_summary"] == "Umgesetzt: alles"
     assert not db.get_task(t)["execute_summary"]
     assert c.post("/p/demo/api/tasks/99999/summary", json={"text": "x"}).status_code == 404
+
+
+def test_role_stats_per_role(app_client, monkeypatch):
+    mod, c, _ = app_client
+    monkeypatch.setattr(mod, "_internal_client", lambda r: True)
+    t = db.create_task("x", "d", 2, [])["id"]
+    with db._connect() as cx:
+        for seq, role, status, verdict, attempt in ((1, "implementation-engineer", "done", "pass", 1),
+                                                    (2, "reviewer", "done", "fail", 1),
+                                                    (3, "reviewer", "done", "pass", 2)):
+            cx.execute("INSERT INTO task_stages (task_id, seq, role, kind, goal, status, verdict, attempt, cost_usd, "
+                       "duration_ms, finished_at, created_at, updated_at) VALUES (?, ?, ?, 'x', '', ?, ?, ?, 0.5, "
+                       "120000, '2999-01-01T00:00:00+00:00', '', '')", (t, seq, role, status, verdict, attempt))
+    rows = {r["role"]: r for r in c.get("/p/demo/api/tasks/role-stats").json()}
+    assert rows["reviewer"]["stages"] == 2 and rows["reviewer"]["pass"] == 1 and rows["reviewer"]["fail"] == 1
+    assert rows["reviewer"]["retried"] == 1 and rows["reviewer"]["avg_min"] == 2.0
+    assert rows["implementation-engineer"]["cost_usd"] == 0.5

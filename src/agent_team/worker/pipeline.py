@@ -30,10 +30,17 @@ PLAN_MARKER = "# Plan"
 KIND_ADVISE = "advise"
 KIND_IMPLEMENT = "implement"
 # Advise stages must not mutate the repo. Bash stays available (quant /
-# auditor need psql + docker exec for numbers); the prompt restricts it to
-# read-only use. On the Claude SDK this list is enforced; Codex ignores it,
+# auditor need psql + docker exec for numbers, the reviewer re-runs tests);
+# the prompt restricts it to read-only use, and the Bash patterns are a second
+# fence for the obvious mutations (prefix match, so not airtight — the prompt
+# is the contract). On the Claude SDK this list is enforced; Codex ignores it,
 # which is why the catalog defaults every advise role to a Claude model.
-ADVISE_DISALLOWED_TOOLS: tuple[str, ...] = ("Write", "Edit", "NotebookEdit")
+ADVISE_DISALLOWED_TOOLS: tuple[str, ...] = (
+    "Write", "Edit", "NotebookEdit",
+    "Bash(git commit:*)", "Bash(git push:*)", "Bash(git reset:*)", "Bash(git checkout:*)",
+    "Bash(git rebase:*)", "Bash(git merge:*)", "Bash(git stash:*)", "Bash(git apply:*)",
+    "Bash(sed -i:*)", "Bash(rm:*)", "Bash(mv:*)",
+)
 
 # Autopilot level that also chains implement stages on live-bot repos
 # (monitoring tasks_db._autopilot_allows). The price: every implement stage

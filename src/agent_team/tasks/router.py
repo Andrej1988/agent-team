@@ -19,6 +19,7 @@ import os
 import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -427,6 +428,12 @@ def _add_board_info(rows: list[dict]) -> None:
             cur["confirm"] = cur["role"] in agent_roles.CONFIRM_ROLES
         st = mirror.worktree_state(t["id"]) if t["status"] == "done" else None
         t["board"] = {"stages": p, "pending_apply": bool(st and st.get("pending"))}
+
+
+@router.get("/role-stats")
+def role_stats(days: int = 7):
+    since = (datetime.now().astimezone() - timedelta(days=min(max(days, 1), 365))).isoformat(timespec="seconds")
+    return tasks_db.role_stats(since)
 
 
 @router.get("/board")

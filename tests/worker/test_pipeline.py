@@ -95,8 +95,10 @@ def test_role_system_prompt_layout():
 # ---------------------------------------------------------------------------
 
 def test_stage_tools_by_kind():
-    assert pipeline.stage_disallowed_tools("advise") == ["Write", "Edit", "NotebookEdit"]
-    assert "Bash" not in pipeline.stage_disallowed_tools("advise")
+    advise = pipeline.stage_disallowed_tools("advise")
+    assert advise[:3] == ["Write", "Edit", "NotebookEdit"]
+    assert "Bash" not in advise                       # reading, psql, re-running tests stay possible
+    assert {"Bash(git commit:*)", "Bash(sed -i:*)", "Bash(rm:*)"} <= set(advise)
     assert pipeline.stage_disallowed_tools("implement") == []
 
 
@@ -107,7 +109,7 @@ def test_full_bots_implement_stage_is_hands_off():
     # Files stay writable — full-bots implement is not a read-only run.
     assert not {"Write", "Edit", "NotebookEdit"} & set(tools)
     assert pipeline.stage_disallowed_tools("implement", _task(autopilot="full")) == []
-    assert pipeline.stage_disallowed_tools("advise", bots) == ["Write", "Edit", "NotebookEdit"]
+    assert pipeline.stage_disallowed_tools("advise", bots) == pipeline.stage_disallowed_tools("advise")
 
     role = pipeline.load_role("integration-ops")
     stages = [_stage(1, "integration-ops", "running")]

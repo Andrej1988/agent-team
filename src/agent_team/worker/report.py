@@ -81,8 +81,17 @@ def _in_week(ts: Optional[str], cutoff: datetime) -> bool:
         return False
 
 
+def role_lines(stats: list[dict]) -> str:
+    return "\n".join(
+        f"- {r['role']}: {r['stages']} Stufen, {r['pass']} pass / {r['fail']} fail"
+        + (f" / {r['blocked']} blocked" if r["blocked"] else "") + (f", {r['crashed']} abgebrochen" if r["crashed"] else "")
+        + (f", {r['retried']} wiederholt" if r["retried"] else "") + f", ${r['cost_usd']:.2f}, Ø {r['avg_min']} min"
+        for r in stats) or "(keine Stufen)"
+
+
 def facts(active: list[dict], done: list[dict], backlog: list[dict], costs: dict[int, float],
-          commits: dict, budget: dict, cutoff: datetime, closed: Optional[list[dict]] = None) -> str:
+          commits: dict, budget: dict, cutoff: datetime, closed: Optional[list[dict]] = None,
+          roles: Optional[list[dict]] = None) -> str:
     def line(t: dict, with_summary: bool = False) -> str:
         s = f"- #{t['id']} [{t['status']}] {t['title']}"
         if t.get("stop_reason"):
@@ -121,6 +130,9 @@ def facts(active: list[dict], done: list[dict], backlog: list[dict], costs: dict
 ## Commits diese Woche (Repo: Autor Anzahl)
 {chr(10).join(commit_lines) or "(keine)"}
 
+## Rollen diese Woche (Stufen, Urteile, Kosten, Dauer)
+{role_lines(roles or [])}
+
 ## Budget (Wochenfenster, alle Teams zusammen)
 {json.dumps(budget, ensure_ascii=False)}
 """
@@ -142,6 +154,9 @@ German, for the phone, at most ~25 lines, plain language, no test-name lists:
 2. What was finished and what it brings (one line each, most important first).
 3. What is stuck or waits for the user — and what the user should do.
 4. Cost/budget in one line (what the team's runs cost, where the budget stands).
+   Then one line on the roles, only if something stands out: a gate that
+   passes nearly everything in very little time (too lenient?), a role that
+   fails or is retried a lot, or one that costs far more than the others.
 5. Next week: the 2-3 things you would do, in order.
 Start your final message with the line `{MARKER}` and put nothing after the report.
 """
@@ -167,8 +182,14 @@ async def run_report(scout: dict, team_dir: Path, control: Path, label: str, cwd
             pass
     commits = await asyncio.to_thread(commits_since, _repo_dirs(team_dir, cwd), "7 days ago")
     budget = await asyncio.to_thread(lead._budget, api_base)
+    try:
+        roles = await asyncio.to_thread(_get, api_base, "/api/tasks/role-stats?days=7")
+    except Exception:  # noqa: BLE001
+        roles = []
+    if not isinstance(roles, list):
+        roles = []
     week = now.strftime("%V")
-    prompt = build_prompt(label, persona, facts(active, done, backlog, costs, commits, budget, cutoff, closed), week)
+    prompt = build_prompt(label, persona, facts(active, done, backlog, costs, commits, budget, cutoff, closed, roles), week)
     log.info("[report %s] starting (KW %s)", sid, week)
     text, tools = await scouts._run_agent(prompt, scout.get("model"), cwd, None)
     i = (text or "").find(MARKER)

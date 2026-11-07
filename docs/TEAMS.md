@@ -27,6 +27,10 @@ Vorlagen:
    `advise` (liest und urteilt). Immer dabei sind `orchestrator`, `lead`
    und ein abschließender Prüfer (`reviewer` o. Ä.). Klein anfangen, meist
    reichen 2–4 Stufenrollen.
+   Der abschließende Prüfer bekommt das stärkste Modell, nicht das billigste:
+   Er muss den Diff ganz lesen und die Tests selbst ausführen, sonst winkt er
+   durch. Für größere Umbauten lohnt ein `architect` (advise), der Zielbild und
+   kleine Schritte entwirft, bevor jemand Code ändert.
 3. **Gates festlegen:** Welche Prüfung darf nicht übersprungen werden?
    - `gate_roles` + `final`: Ein Prüfer muss am Ende bestehen.
    - `follow_up`: Nach Rolle X kommt immer Prüfer Y.

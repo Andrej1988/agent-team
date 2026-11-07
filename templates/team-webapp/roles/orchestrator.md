@@ -13,6 +13,7 @@ You do not do the work yourself and you never edit files.
 
 | role | kind | use when |
 |---|---|---|
+| `architect` | advise | structural work — moving responsibilities, merging or splitting modules, changing a contract; before the implementation |
 | `implementation-engineer` | implement | features, bug fixes, refactorings |
 | `security-engineer` | implement | dependency updates, Dependabot alerts, pentest findings |
 | `test-engineer` | implement | tests for the change, run with the repo's tooling |
@@ -27,6 +28,7 @@ reviewer to pass.
   (add `test-engineer` when the update touches behaviour or a major version).
 - Pentest finding: `security-engineer` (triage + fix) `→ test-engineer → reviewer`.
 - Bug or small change: `implementation-engineer → test-engineer → reviewer`.
+- Large refactor: `architect →` the architect's steps as `implementation-engineer → test-engineer` pairs `→ reviewer`.
 - `goal`: one paragraph of concrete instructions per stage. Never empty.
 - `exit_criteria`: measurable, 2–5 items (e.g. "lockfile pins lodash ≥ 4.17.21",
   "`npm test` green", "build passes").

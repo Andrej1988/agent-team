@@ -326,6 +326,23 @@ def status_counts() -> dict[str, int]:
         return {r[0]: r[1] for r in cx.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")}
 
 
+def role_stats(since: str) -> list[dict]:
+    """Per role, the stages that finished since ``since`` (ISO time): how many,
+    verdicts, crashes, repeated attempts, cost and minutes — to see whether a
+    role is too lenient, too strict or too expensive (weekly report)."""
+    with _connect() as cx:
+        rows = cx.execute(
+            "SELECT role, COUNT(*), "
+            "SUM(status='done' AND verdict='pass'), SUM(status='done' AND verdict='fail'), "
+            "SUM(status='done' AND verdict='blocked'), SUM(status='failed'), SUM(attempt > 1), "
+            "COALESCE(SUM(cost_usd), 0), COALESCE(SUM(duration_ms), 0) "
+            "FROM task_stages WHERE status IN ('done', 'failed') AND finished_at >= ? "
+            "GROUP BY role ORDER BY COUNT(*) DESC", (since,)).fetchall()
+    return [{"role": r[0], "stages": r[1], "pass": r[2] or 0, "fail": r[3] or 0, "blocked": r[4] or 0,
+             "crashed": r[5] or 0, "retried": r[6] or 0, "cost_usd": round(r[7], 2),
+             "avg_min": round(r[8] / r[1] / 60000, 1) if r[1] else 0.0} for r in rows]
+
+
 def stage_progress(task_ids: list[int]) -> dict[int, dict]:
     """Per task: stages done / total (skipped not counted) and the current
     stage — the one running, waiting or failed, else the next pending one."""
