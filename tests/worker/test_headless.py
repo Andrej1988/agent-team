@@ -37,7 +37,7 @@ class _Client:
     """Fake SDK client: one scripted answer per query."""
 
     def __init__(self, answers):
-        self.answers, self.queries = list(answers), []
+        self.answers, self.queries = list(answers), []   # None = empty turn (0 turns)
 
     async def connect(self):
         return None
@@ -50,9 +50,10 @@ class _Client:
 
     async def receive_response(self):
         text = self.answers.pop(0)
-        yield sdk.AssistantMessage(content=[sdk.TextBlock(text=text)], model="m")
+        if text is not None:
+            yield sdk.AssistantMessage(content=[sdk.TextBlock(text=text)], model="m")
         yield sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
-                                num_turns=1, session_id="s")
+                                num_turns=0 if text is None else 1, session_id="s")
 
 
 def _run(monkeypatch, answers):
@@ -87,3 +88,15 @@ def test_no_nudge_when_the_result_is_there_and_only_one_nudge(monkeypatch):
     assert len(client.queries) == 1
     client, _, _ = _run(monkeypatch, ["ich melde mich", "immer noch nicht"])
     assert len(client.queries) == 2   # then the stage goes to the user as before
+
+
+def test_empty_resumed_turn_resends_the_same_message_once(monkeypatch):
+    # A resumed session that answers with zero turns dropped the user's answer:
+    # the same message goes again, not the generic nudge.
+    client, done, failed = _run(monkeypatch, [None, RESULT])
+    assert client.queries == ["p", "p"]
+    assert done and not failed
+    # Only once; a second empty turn falls through to the nudge.
+    client, done, _ = _run(monkeypatch, [None, None, RESULT])
+    assert client.queries[:2] == ["p", "p"] and "Automatic message from the worker" in client.queries[2]
+    assert done

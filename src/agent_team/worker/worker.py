@@ -549,9 +549,13 @@ async def _run_agent_session(
         await client.connect()
         pending: str | None = prompt
         nudged = False
+        resent = False
         while pending is not None:
-            await client.query(pending)
+            sent = pending
+            await client.query(sent)
             pending = None
+            parts_before = len(final_text_parts)
+            turns = None
             async for msg in client.receive_response():
                 if isinstance(msg, SystemMessage) and msg.subtype == "init":
                     data = msg.data or {}
@@ -603,6 +607,7 @@ async def _run_agent_session(
                         "api_error_status": getattr(msg, "api_error_status", None),
                         "terminal_reason": getattr(msg, "terminal_reason", None),
                     }
+                    turns = getattr(msg, "num_turns", None)
                     usage = getattr(msg, "usage", None)
                     await _safe_append(
                         tid,
@@ -617,6 +622,16 @@ async def _run_agent_session(
                             **result_meta,
                         ),
                     )
+            # A resumed session sometimes answers in a fraction of a second with
+            # zero turns and no text: the message was never processed. Send the
+            # very same message once more, so the user's answer is not lost.
+            if (turns == 0 and not resent and len(final_text_parts) == parts_before
+                    and not result_meta.get("is_error")):
+                resent = True
+                pending = sent
+                log.info("[task %s] %s: empty turn (0 turns) — sending the message again", tid, kind)
+                await _safe_append(tid, kind, _event("user_reply", text=sent))
+                continue
             # A stage that ended its turn without the result block (typically
             # "I'll report back" after starting something in the background)
             # gets one nudge in the same session instead of a question to the user.
