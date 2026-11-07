@@ -194,6 +194,25 @@ nicht.
   mit `systemctl --user enable --now agent-team`; für den Start ohne Login
   `loginctl enable-linger`.
 
+## 6. Nur wer ins öffentliche Repo committet
+
+Wer Änderungen an agent-team selbst zurückgeben will (Fork oder eigener Zweig),
+richtet einmal die Sperre gegen persönliche Daten ein:
+
+```bash
+tools/check-private.sh --install
+```
+
+Das hängt das Skript als `pre-commit`, `commit-msg` und `pre-push` ein und legt
+eine leere Sperrliste unter `.git/info/private-denylist` an. Dort gehört je
+Zeile ein Begriff hinein: eigene Namen, Benutzernamen, Home-Pfade, Domains, IPs,
+Mail-Adressen, Projektnamen. Die Liste bleibt außerhalb des Repos. Der Hook
+lehnt Commits und Pushes ab, die einen dieser Begriffe oder etwas Secret-artiges
+enthalten; `pre-push` prüft alle neuen Commits noch einmal, auch solche, die
+ohne Hook entstanden sind. `--no-verify` nicht benutzen. Eigene Konfiguration
+und Deployments gehören nicht ins Repo, sondern nach `~/.agent-team/` bzw. in
+ein eigenes, privates Repo.
+
 ## Grenzen (dem Nutzer so sagen)
 
 - Agenten laufen mit den Rechten des Nutzers (`bypassPermissions`), genau

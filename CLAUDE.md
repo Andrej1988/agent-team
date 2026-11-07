@@ -13,5 +13,7 @@ beliebiges Thema bauen: `docs/TEAMS.md`. Docker-Betrieb: `docs/DOCKER.md`.
   neutral halten (`myproject`, `demo`, `shop`, `/home/user`, `example.invalid`).
   Deployments (Compose-Dateien, `projects.yaml`, Daten) liegen in einem
   eigenen Repo bzw. Ordner außerhalb.
+- Vor dem ersten Commit in diesem Repo: `tools/check-private.sh --install`
+  (Hooks + Sperrliste, siehe `docs/SETUP.md` Abschnitt 6). Nie `--no-verify`.
 - Tests: `PYTHONPATH=src:base python -m pytest tests` (eigene Fixtures unter
   `tests/fixtures/`).
