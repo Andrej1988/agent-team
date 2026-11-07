@@ -99,6 +99,13 @@ scouts:
     model: opus
     max_proposals: 2
     channel: webapp
+  # Weekly: attack surface, auth, input handling, secrets, containers.
+  - id: security
+    role: security-engineer
+    every_hours: 168
+    model: opus
+    max_proposals: 2
+    channel: webapp
   # New error groups in the app's log files (network share); remove this
   # scout if there are no logs. Set AT_LOG_GLOBS in local.yaml (projects.<id>.env).
   - id: logs

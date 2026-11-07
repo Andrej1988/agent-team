@@ -36,8 +36,10 @@ Vorlagen:
 4. **Scouts festlegen:** Woher kommen Ideen? Den Lead-Lauf und den
    Wochenbericht gibt es immer. Dazu je nach Datenquelle eigene Scouts: das
    Repo selbst, Logs, Alerts oder eine API, die ein `prepare`-Skript abholt.
-   Code-Projekte bekommen außerdem den wöchentlichen `refactor`-Scout aus
-   `templates/team-webapp`: Er sucht nach Struktur- und Architektur-Umbauten.
+   Code-Projekte bekommen außerdem die wöchentlichen Scouts `refactor`
+   (Struktur und Architektur) und `security` (Angriffsfläche, Rechte,
+   Eingaben, Secrets) aus `templates/team-webapp`. Läuft etwas im Betrieb,
+   gehört ein Scout für wiederkehrende Störungen dazu (Logs, Alerts, Backups).
 5. **Prompts schreiben:** Pro Rolle das Vorgehen in wenigen Punkten, das
    Finding-Präfix (z. B. `EDT` für eine Lektorin) und was in die
    Zusammenfassung gehört. Deutsch oder Englisch, wie der Nutzer will.
