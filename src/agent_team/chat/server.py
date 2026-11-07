@@ -51,8 +51,10 @@ async def lifespan(_app: FastAPI):
         runtimes[ch.id] = rt
     log.info("chat service up: %d channel(s): %s", len(runtimes), ", ".join(runtimes))
     prober = asyncio.create_task(_probe_loop())
+    reaper = asyncio.create_task(_idle_loop())
     yield
     prober.cancel()
+    reaper.cancel()
     for rt in runtimes.values():
         await rt.drop_client(keep_session=True)
 
@@ -385,6 +387,21 @@ async def probe_usage() -> Optional[dict]:
         if ev.get("type") == "rate_limit_event":
             sample = budget.record(ev.get("rate_limit_info") or {}, "probe") or sample
     return sample
+
+
+# Minutes a chat may sit unused before its agent process is closed (the
+# session resumes on the next message). 0 keeps every session open.
+IDLE_CLOSE_MIN = float(os.environ.get("AT_CHAT_IDLE_CLOSE_MIN", "30"))
+
+
+async def _idle_loop() -> None:
+    while IDLE_CLOSE_MIN > 0:
+        await asyncio.sleep(60)
+        for rt in list(runtimes.values()):
+            try:
+                await rt.close_if_idle(IDLE_CLOSE_MIN * 60)
+            except Exception:  # noqa: BLE001 — one channel must not stop the rest
+                log.exception("[%s] closing an idle session failed", rt.ch.id)
 
 
 async def _probe_loop() -> None:

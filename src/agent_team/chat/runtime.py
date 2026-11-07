@@ -22,6 +22,7 @@ gone (the transcript keeps everything, the UI decides what to show).
 from __future__ import annotations
 
 import asyncio
+import time
 import base64
 import json
 import logging
@@ -399,6 +400,7 @@ class ChannelRuntime:
         self.pending: dict[str, _Pending] = {}
         self.turn_task: Optional[asyncio.Task] = None
         self._auth_failed = False
+        self.last_active = time.monotonic()
 
     # ---- settings ------------------------------------------------------------
 
@@ -673,6 +675,7 @@ class ChannelRuntime:
         the turn is told."""
         try:
             async for msg in client.receive_messages():
+                self.last_active = time.monotonic()
                 if isinstance(msg, RateLimitEvent):
                     self._record_usage(msg)
                     continue
@@ -887,7 +890,20 @@ class ChannelRuntime:
         self.turn_task = asyncio.create_task(self._turn(prompt), name=f"turn-{self.ch.id}")
         return {"started": True}
 
+    async def close_if_idle(self, idle_s: float) -> bool:
+        """Close the agent process of a chat nobody used for ``idle_s``: every
+        open session is a CLI plus its MCP servers (~250 MB), and dozens of
+        them filled the container until the OOM killer cut running turns.
+        The session id stays, so the next message resumes the conversation."""
+        if (self.client is None or self.lock.locked() or self.pending
+                or time.monotonic() - self.last_active < idle_s):
+            return False
+        log.info("[%s] closing idle Claude session (%d min)", self.ch.id, (time.monotonic() - self.last_active) // 60)
+        await self.drop_client(keep_session=True)
+        return True
+
     async def _turn(self, prompt: str) -> None:
+        self.last_active = time.monotonic()
         async with self.lock:
             self.log.append("busy", busy=True)
             try:
@@ -901,6 +917,7 @@ class ChannelRuntime:
                 self.log.append("error", text=redact(f"Fehler: {e}"))
                 self._check_auth(str(e))
             finally:
+                self.last_active = time.monotonic()
                 self.log.append("busy", busy=False)
                 self.log.append("turn_end")
             if self._auth_failed:

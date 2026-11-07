@@ -56,3 +56,28 @@ def test_broken_stream_ends_turn_and_drops_client(tmp_path, monkeypatch):
     assert [e["type"] for e in events][-2:] == ["busy", "turn_end"]
     assert rt.client is None and dead.disconnected
     assert dead.reads == 1  # no re-read loop
+
+
+def test_idle_session_is_closed_but_keeps_its_id(tmp_path, monkeypatch):
+    """Dozens of open sessions filled the container (OOM killed running
+    turns): an unused one is closed, the session id stays for resuming."""
+    monkeypatch.setattr(projects, "DATA_ROOT", tmp_path)
+    ch = projects.Channel(id="demo-chat", project="demo", label="Demo", cwd="/tmp")
+    rt = runtime.ChannelRuntime(ch, None)
+    rt._set_session("sess-1")
+    client = DeadClient()
+    rt.client = client
+
+    async def run():
+        assert not await rt.close_if_idle(60)          # just used
+        rt.last_active -= 120
+        rt.pending["x"] = object()
+        assert not await rt.close_if_idle(60)          # waits for the user's answer
+        rt.pending.clear()
+        async with rt.lock:
+            assert not await rt.close_if_idle(60)      # a turn is running
+        assert await rt.close_if_idle(60)
+
+    asyncio.run(run())
+    assert rt.client is None and client.disconnected
+    assert rt.state.session_ids.get("claude") == "sess-1"
