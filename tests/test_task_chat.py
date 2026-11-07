@@ -246,7 +246,14 @@ def test_limit_gets_a_card(lead_project):
 def test_stopped_task_with_branch_offers_taking_it_over(lead_project, monkeypatch):
     monkeypatch.setattr(mirror, "worktree_state", lambda tid: {"pending": True, "repos": {}})
     stages = [{"seq": 1, "role": "implementation-engineer", "status": "done", "verdict": "pass"}]
-    assert "apply:5" in _data(mirror.available_actions(_task("blocked"), stages))
+    acts = mirror.available_actions(_task("blocked"), stages)
+    assert "apply:5" in _data(acts)
+    # ticking it off would leave the work unmerged: the tap asks first
+    done = next(a for a in acts if a["data"] == "done:5")
+    assert "nicht übernommen" in done["confirm"]
+    monkeypatch.setattr(mirror, "worktree_state", lambda tid: None)
+    done = next(a for a in mirror.available_actions(_task("blocked"), stages) if a["data"] == "done:5")
+    assert "confirm" not in done
 
 
 def test_button_rows_keep_the_confirm_and_drop_the_kind():

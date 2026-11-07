@@ -17,7 +17,9 @@ root is a repo itself gets the root as a worktree too, the
 sub-repos inside it. Ignored ``.env`` files are copied in so tests run.
 
 After each implement stage the worker commits what changed (``commit``).
-"Übernehmen" (``apply``) rebases the branch onto the live branch inside the
+"Übernehmen" (``apply``) rebases the branch onto the live branch (skipped
+when the live branch is already merged in; a clean merge if the rebase
+conflicts) inside the
 worktree and fast-forwards the live checkout — the live tree never sees a
 conflict, and uncommitted work of others there stays as it is (git refuses
 the fast-forward if it would overwrite it). ``cleanup`` removes the worktree
@@ -282,6 +284,28 @@ def _put_notes_back(main: Path, saved: dict[str, bytes]) -> None:
         (main / rel).write_bytes(data)
 
 
+def _onto(p: Path, base: str, env: Optional[dict] = None) -> None:
+    """Make the branch checked out in ``p`` contain ``base``, so the live
+    checkout can fast-forward. Nothing to do when ``base`` is already an
+    ancestor (e.g. a stage merged the live branch to resolve a conflict:
+    rebasing would replay the old commits and hit the same conflict again).
+    Otherwise rebase; if that conflicts, try a plain merge, which succeeds
+    whenever the final trees combine cleanly. Raises GitError if both fail."""
+    if _ok(p, "merge-base", "--is-ancestor", base, "HEAD"):
+        return
+    try:
+        _git(p, "rebase", "--quiet", base, env=env)
+        return
+    except GitError as e:
+        _git(p, "rebase", "--abort", check=False)
+        err = e
+    try:
+        _git(p, "merge", "--quiet", "--no-edit", base, env=env)
+    except GitError:
+        _git(p, "merge", "--abort", check=False)
+        raise err from None
+
+
 def apply(lay: Layout, task_id: int, env: Optional[dict] = None) -> list[str]:
     """Bring the task's branch into the live checkout: rebase onto the live
     branch in the worktree, then fast-forward the live checkout. Raises
@@ -296,9 +320,8 @@ def apply(lay: Layout, task_id: int, env: Optional[dict] = None) -> list[str]:
         if int(_git(main, "rev-list", "--count", f"{base}..{b}").strip() or 0) == 0:
             continue
         try:
-            _git(p, "rebase", "--quiet", base, env=env)
+            _onto(p, base, env)
         except GitError as e:
-            _git(p, "rebase", "--abort", check=False)
             raise GitError(f"{name or '.'}: Konflikt mit dem aktuellen {base} — {e}") from None
         todo.append((name, main, base))
     out = []
@@ -338,9 +361,8 @@ def publish_pr(lay: Layout, task_id: int, title: str, body: str, env: Optional[d
         if int(_git(p, "rev-list", "--count", f"origin/{base}..{b}").strip() or 0) == 0:
             continue
         try:
-            _git(p, "rebase", "--quiet", f"origin/{base}", env=env)
+            _onto(p, f"origin/{base}", env)
         except GitError as e:
-            _git(p, "rebase", "--abort", check=False)
             raise GitError(f"{name or '.'}: Konflikt mit origin/{base} — {e}") from None
         _git(p, "push", "--quiet", "--force-with-lease", "-u", "origin", f"{b}:{b}", env=env)
         url = _gh(p, "pr", "view", b, "--json", "url", "--jq", ".url", env=env, check=False).strip()
@@ -412,8 +434,9 @@ into them. To change another repo, first make it a worktree:
 - You need not commit: the worker commits what you changed on `{b}` after
   your stage. Never push, never merge into the live branch, never open a
   pull request — the user's "Übernehmen" does that. If your goal is
-  to resolve a conflict with the live branch: `git -C {ws}/<repo> rebase <live
-  branch>` in the worktree, resolve, `git rebase --continue`.
+  to resolve a conflict with the live branch: `git -C {ws}/<repo> merge <live
+  branch>` in the worktree, resolve, commit the merge (keep both sides'
+  additions unless they truly contradict); "Übernehmen" keeps that merge.
 - Never start, build or recreate live services from here (`docker compose
   up/build` of a real service): the live system runs from the live checkout.
   Deploying is the release stage's job after the user approved merging."""

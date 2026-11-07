@@ -154,6 +154,8 @@ of telling them to do it in the app. Name the step with the button's words
 („Als erledigt abhaken“, „Neu planen“, „erneut versuchen“, „übernehmen“): the
 app then shows that button under your answer.
 Ticking off: when the user tells you to, set it yourself (POST {api}/<id>/done).
+If GET {api}/<id>/actions offers „Ergebnis übernehmen“, the branch is not
+merged yet: say so first and offer that button instead of ticking off blindly.
 Never say you cannot; only starting, closing the user's tasks and „Übernehmen“
 need their tap.
 

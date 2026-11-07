@@ -318,7 +318,10 @@ def available_actions(task: dict, stages: list[dict]) -> list[dict]:
                 for i, b in enumerate(steps)]
     if status in ("closed", "backlog"):
         return [_action("Wieder öffnen", f"restore:{tid}")]
-    ending = [_action("Als erledigt abhaken", f"done:{tid}"),
+    unmerged = status not in ("new", "refined") and bool((worktree_state(tid) or {}).get("pending"))
+    ending = [_action("Als erledigt abhaken", f"done:{tid}", confirm=(
+                  "Der Task-Branch ist noch nicht übernommen: die Änderungen gehen so nicht live. "
+                  "Trotzdem abhaken?") if unmerged else None),
               _action("Schließen – wird nicht gemacht", f"close:{tid}")]
     if status in ("new", "refined") or (not stages and task.get("mode") != "pipeline"):
         return [_action("Freigeben & starten", f"start:{tid}", "primary"),
@@ -353,7 +356,7 @@ def available_actions(task: dict, stages: list[dict]) -> list[dict]:
         out.append(_action(f"Stufe {last['seq']} erneut versuchen", f"retry:{tid}:{last['seq']}", "primary"))
     if status == "blocked" and nxt is not None and not any(s["status"] in ("failed", "awaiting_input") for s in stages):
         out.append(_action("Weitermachen", f"resume:{tid}", "primary"))
-    if (worktree_state(tid) or {}).get("pending"):
+    if unmerged:
         out.append(_action("Ergebnis übernehmen (mergen, ohne Deploy)", f"apply:{tid}", "primary"))
     if last is not None and last["status"] == "failed" and last["role"] not in agent_roles.GATE_ROLES:
         out.append(_action(f"Stufe {last['seq']} überspringen", f"skip:{tid}:{last['seq']}"))

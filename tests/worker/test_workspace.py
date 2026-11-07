@@ -101,6 +101,40 @@ def test_apply_conflict_leaves_live_checkout_alone(system):
     assert workspace.state(system, 9)["pending"]   # branch still there, untouched
 
 
+def test_apply_keeps_a_merge_that_resolved_the_conflict(system):
+    """A stage resolved the conflict by merging the live branch into the task
+    branch. Rebasing would replay the old commit and conflict again; apply
+    sees the live branch is already in and just fast-forwards."""
+    ws = workspace.ensure(system, 10, ["swing"])
+    (ws / "swing" / "a.py").write_text("x = 'task'\n")
+    workspace.commit(system, 10, "task", ENV)
+    (system.main_root / "swing" / "a.py").write_text("x = 'live'\n")
+    git(system.main_root / "swing", "commit", "-qam", "live")
+    w = ws / "swing"
+    subprocess.run(["git", "merge", "-q", "main"], cwd=w, capture_output=True,
+                   env={**ENV, "PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(w)})
+    (w / "a.py").write_text("x = 'both'\n")
+    git(w, "commit", "-qam", "resolve")
+    out = workspace.apply(system, 10, ENV)
+    assert out and (system.main_root / "swing" / "a.py").read_text() == "x = 'both'\n"
+
+
+def test_apply_falls_back_to_a_clean_merge_when_the_rebase_conflicts(system):
+    """An early commit conflicts, a later one undid it: the rebase stops, the
+    merge of the final trees is clean."""
+    ws = workspace.ensure(system, 11, ["swing"])
+    (ws / "swing" / "a.py").write_text("x = 'try'\n")
+    workspace.commit(system, 11, "try", ENV)
+    (ws / "swing" / "a.py").write_text("x = 1\n")
+    (ws / "swing" / "n.py").write_text("n = 1\n")
+    workspace.commit(system, 11, "undo + new", ENV)
+    (system.main_root / "swing" / "a.py").write_text("x = 'live'\n")
+    git(system.main_root / "swing", "commit", "-qam", "live")
+    assert workspace.apply(system, 11, ENV)
+    assert (system.main_root / "swing" / "a.py").read_text() == "x = 'live'\n"
+    assert (system.main_root / "swing" / "n.py").read_text() == "n = 1\n"
+
+
 def test_apply_refuses_to_overwrite_local_changes(system):
     ws = workspace.ensure(system, 10, ["swing"])
     (ws / "swing" / "a.py").write_text("x = 3\n")
