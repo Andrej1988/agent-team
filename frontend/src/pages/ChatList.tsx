@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Loader2, MessageSquare, Plus } from 'lucide-react'
 import { api, type ChatChannel } from '../api/client'
@@ -11,6 +11,8 @@ function when(ts: string | null): string {
     ? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
     : d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
 }
+
+const SCROLL_KEY = 'at.chatlist.scroll'
 
 export default function ChatList({ onUnread }: { onUnread?: (n: number) => void }) {
   const [channels, setChannels] = useState<ChatChannel[] | null>(null)
@@ -27,6 +29,25 @@ export default function ChatList({ onUnread }: { onUnread?: (n: number) => void 
     const id = window.setInterval(load, 15_000)
     return () => window.clearInterval(id)
   }, [onUnread])
+
+  // Back from a chat lands where the list was, not at the top: remember the
+  // page scroll while the list is shown, restore it once the list has loaded.
+  useEffect(() => {
+    let frame = 0
+    const save = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)))
+    }
+    window.addEventListener('scroll', save, { passive: true })
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', save) }
+  }, [])
+  const restored = useRef(false)
+  useLayoutEffect(() => {
+    if (restored.current || !channels) return
+    restored.current = true
+    const y = Number(sessionStorage.getItem(SCROLL_KEY) || 0)
+    if (y > 0) window.scrollTo(0, y)
+  }, [channels])
 
   if (error) return <div className="text-sm text-rose-300">{error}</div>
   if (!channels) return <div className="text-sm text-slate-400">Lade …</div>
