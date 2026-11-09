@@ -971,9 +971,15 @@ export default function Chat() {
       {taskState && !service && (
         <TaskStatusBar state={taskState} onAction={(b) => pressButton({ seq: 0 } as ChatEvent, b)} />
       )}
+      {/* Outside the scroller: a refused tap must be visible where you tapped,
+          not at the top of a long history. */}
+      {error && (
+        <button onClick={() => setError(null)} className="mx-3 my-1 rounded-lg border border-rose-500/50 bg-rose-950/60 px-3 py-2 text-left text-xs text-rose-200">
+          {error} <span className="text-rose-400">· ausblenden</span>
+        </button>
+      )}
       <div ref={scrollerRef} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2"
         onScroll={(e) => { const el = e.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
-        {error && <div className="my-2 text-xs text-rose-300">{error}</div>}
         {blocks.length === 0 && !error && <div className="mt-8 text-center text-sm text-slate-500">Noch keine Nachrichten in diesem Kanal.</div>}
         {blocks.map((b) => b.kind === 'tools'
           ? <ToolsBlock key={`t${b.events[0].seq}`} events={b.events} onDelete={deleteSeqs} />

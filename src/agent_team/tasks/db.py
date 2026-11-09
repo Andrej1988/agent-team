@@ -1238,6 +1238,20 @@ def update_plan(
     return get_task(task_id)
 
 
+def blocking_stage(stages: list[dict]) -> Optional[dict]:
+    """The stage that must be retried, answered or skipped before the task
+    can go on — or None. A failed stage that later stages already moved past
+    (a re-plan appended new ones after it, which then ran) no longer blocks:
+    the old release attempt of #64 kept "Freigeben" refused for good."""
+    for i, s in enumerate(stages):
+        if s["status"] == "awaiting_input":
+            return s
+        if s["status"] == "failed" and not any(
+                t["status"] in ("done", "skipped", "running") for t in stages[i + 1:]):
+            return s
+    return None
+
+
 def request_next_stage(task_id: int) -> Optional[dict]:
     """Start the first pending stage. Refuses while a stage is failed or
     awaiting input (retry / answer / skip it first). With nothing pending the
@@ -1248,11 +1262,11 @@ def request_next_stage(task_id: int) -> Optional[dict]:
         if not task or task["status"] != "plan_ready":
             return None
         stages = _stage_rows(cx, task_id)
-        for s in stages:
-            if s["status"] in ("failed", "awaiting_input"):
-                raise TransitionError(
-                    f"stage {s['seq']} ({s['role']}) is {s['status']} — retry, answer or skip it first"
-                )
+        s = blocking_stage(stages)
+        if s is not None:
+            raise TransitionError(
+                f"stage {s['seq']} ({s['role']}) is {s['status']} — retry, answer or skip it first"
+            )
         pending = [s for s in stages if s["status"] == "pending"]
         if pending:
             wait = _wait_until(cx, task_id, pending[0])
@@ -1746,7 +1760,7 @@ def resume_budget_paused(task_id: int) -> Optional[dict]:
         if not task or task["status"] != "plan_ready" or not (task.get("paused_reason") or ""):
             return None
         stages = _stage_rows(cx, task_id)
-        if any(s["status"] in ("failed", "awaiting_input", "running") for s in stages):
+        if blocking_stage(stages) is not None or any(s["status"] == "running" for s in stages):
             _set_task(cx, task_id, now, paused_reason=None)
             return _task_row(cx, task_id)
         nxt = next((s for s in stages if s["status"] == "pending"), None)

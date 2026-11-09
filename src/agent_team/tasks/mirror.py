@@ -337,6 +337,14 @@ def available_actions(task: dict, stages: list[dict]) -> list[dict]:
             out.append(_action(f"Stufe {seq} überspringen", f"skip:{tid}:{seq}"))
         return out + [_action("Task stoppen", f"stop:{tid}", "danger", "Task stoppen?")]
     nxt = next((s for s in stages if s["status"] == "pending"), None)
+    if status == "plan_ready" and (stuck := tasks_db.blocking_stage(stages)) is not None:
+        # The backend refuses "next" until this one is dealt with: offer that.
+        out = []
+        if tasks_db.stage_retryable(status, stuck, stages):
+            out.append(_action(f"Stufe {stuck['seq']} erneut versuchen", f"retry:{tid}:{stuck['seq']}", "primary"))
+        if stuck["role"] not in agent_roles.GATE_ROLES:
+            out.append(_action(f"Stufe {stuck['seq']} überspringen", f"skip:{tid}:{stuck['seq']}"))
+        return out + replan + ending
     if status == "plan_ready":
         out = []
         paused = task.get("paused_reason") or ""
@@ -354,7 +362,7 @@ def available_actions(task: dict, stages: list[dict]) -> list[dict]:
     last = next((s for s in reversed(stages) if s["status"] not in ("pending", "skipped")), None)
     if last is not None and tasks_db.stage_retryable(status, last, stages):
         out.append(_action(f"Stufe {last['seq']} erneut versuchen", f"retry:{tid}:{last['seq']}", "primary"))
-    if status == "blocked" and nxt is not None and not any(s["status"] in ("failed", "awaiting_input") for s in stages):
+    if status == "blocked" and nxt is not None and tasks_db.blocking_stage(stages) is None:
         out.append(_action("Weitermachen", f"resume:{tid}", "primary"))
     if unmerged:
         out.append(_action("Ergebnis übernehmen (mergen, ohne Deploy)", f"apply:{tid}", "primary"))

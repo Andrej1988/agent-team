@@ -288,3 +288,21 @@ def test_summary_can_be_requested_until_there_is_one(lead_project):
     assert _data(mirror.summary_action(_task("blocked"), [done])) == ["summarize:5"]
     assert mirror.summary_action(_task("blocked", user_summary="x"), [done]) == []
     assert mirror.summary_action(_task("running"), [done]) == []
+
+
+def test_old_failed_stage_that_later_stages_passed_does_not_block(lead_project):
+    """#64: the first release attempt failed, a re-plan appended stages that
+    ran — "Release Manager freigeben" must start the new release stage."""
+    from agent_team.tasks import db as tasks_db
+    stages = [{"seq": 4, "role": "release-manager", "status": "failed"},
+              {"seq": 5, "role": "data-engineer", "status": "done", "verdict": "pass"},
+              {"seq": 6, "role": "reviewer", "status": "done", "verdict": "pass"},
+              {"seq": 7, "role": "release-manager", "status": "pending"}]
+    assert tasks_db.blocking_stage(stages) is None
+    assert "next:5" in _data(mirror.available_actions(_task("plan_ready"), stages))
+    # still failed with nothing after it: retry or skip it, no "next" that the backend refuses
+    stuck = [{"seq": 1, "role": "implementation-engineer", "status": "failed"},
+             {"seq": 2, "role": "reviewer", "status": "pending"}]
+    assert tasks_db.blocking_stage(stuck)["seq"] == 1
+    acts = _data(mirror.available_actions(_task("plan_ready"), stuck))
+    assert "next:5" not in acts and "retry:5:1" in acts
