@@ -74,6 +74,64 @@ def commits_since(dirs: list[Path], since: str) -> dict[str, dict[str, int]]:
     return out
 
 
+STALE_DAYS, STALE_BEHIND = 14, 20
+
+
+def stale_worktrees(dirs: list[Path], now: Optional[datetime] = None) -> list[dict]:
+    """Side worktrees (not the pipeline's task worktrees, which clean up
+    themselves) whose branch is old or far behind the live branch. A branch
+    cut weeks ago silently reverts newer fixes if someone builds from it,
+    and its own commits are forgotten work. Only reported, never removed."""
+    now = now or datetime.now().astimezone()
+    seen, out = set(), []
+    roots = list(dirs) + [c for d in dirs for c in sorted(d.iterdir()) if (c / ".git").exists()] \
+        if dirs else []
+    for repo in roots:
+        if repo in seen:
+            continue
+        seen.add(repo)
+
+        def git(*a: str) -> str:
+            try:
+                return subprocess.run(["git", "-C", str(repo), *a], capture_output=True,
+                                      text=True, timeout=30).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                return ""
+        base = git("symbolic-ref", "--short", "HEAD")
+        if not base:
+            continue
+        path = None
+        for line in git("worktree", "list", "--porcelain").splitlines() + [""]:
+            if line.startswith("worktree "):
+                path = line[9:]
+            elif line.startswith("branch ") and path and "/.task-worktrees/" not in path \
+                    and path.rstrip("/") != str(repo).rstrip("/"):
+                br = line[7:].removeprefix("refs/heads/")
+                if br == base:
+                    continue
+                ahead = int(git("rev-list", "--count", f"{base}..{br}") or 0)
+                behind = int(git("rev-list", "--count", f"{br}..{base}") or 0)
+                try:
+                    last = datetime.fromisoformat(git("log", "-1", "--format=%cI", br))
+                except ValueError:
+                    continue
+                age = (now - last).days
+                if age >= STALE_DAYS or behind >= STALE_BEHIND:
+                    out.append({"repo": repo.name, "branch": br, "path": path, "ahead": ahead,
+                                "behind": behind, "last": last.strftime("%d.%m."), "age": age})
+            elif not line:
+                path = None
+    return sorted(out, key=lambda w: -w["age"])
+
+
+def worktree_lines(stale: list[dict]) -> str:
+    return "\n".join(
+        f"- {w['repo']} `{w['branch']}` ({w['path'].split('/')[-1]}): "
+        + (f"{w['ahead']} eigene Commits nicht gemergt, " if w["ahead"] else "nichts Eigenes, ")
+        + f"{w['behind']} hinter dem Hauptzweig, zuletzt {w['last']}"
+        for w in stale) or "(keine)"
+
+
 def _in_week(ts: Optional[str], cutoff: datetime) -> bool:
     try:
         return datetime.fromisoformat(ts or "") >= cutoff
@@ -91,7 +149,7 @@ def role_lines(stats: list[dict]) -> str:
 
 def facts(active: list[dict], done: list[dict], backlog: list[dict], costs: dict[int, float],
           commits: dict, budget: dict, cutoff: datetime, closed: Optional[list[dict]] = None,
-          roles: Optional[list[dict]] = None) -> str:
+          roles: Optional[list[dict]] = None, stale: Optional[list[dict]] = None) -> str:
     def line(t: dict, with_summary: bool = False) -> str:
         s = f"- #{t['id']} [{t['status']}] {t['title']}"
         if t.get("stop_reason"):
@@ -133,6 +191,9 @@ def facts(active: list[dict], done: list[dict], backlog: list[dict], costs: dict
 ## Rollen diese Woche (Stufen, Urteile, Kosten, Dauer)
 {role_lines(roles or [])}
 
+## Alte Nebenzweige mit Arbeitsbaum (≥ {STALE_DAYS} Tage alt oder ≥ {STALE_BEHIND} hinter dem Hauptzweig)
+{worktree_lines(stale or [])}
+
 ## Budget (Wochenfenster, alle Teams zusammen)
 {json.dumps(budget, ensure_ascii=False)}
 """
@@ -157,6 +218,8 @@ German, for the phone, at most ~25 lines, plain language, no test-name lists:
    Then one line on the roles, only if something stands out: a gate that
    passes nearly everything in very little time (too lenient?), a role that
    fails or is retried a lot, or one that costs far more than the others.
+   If old side branches are listed: one line naming them and what to do —
+   merge (after bringing the live branch in) or remove; never build from them.
 5. Next week: the 2-3 things you would do, in order.
 Start your final message with the line `{MARKER}` and put nothing after the report.
 """
@@ -188,8 +251,10 @@ async def run_report(scout: dict, team_dir: Path, control: Path, label: str, cwd
         roles = []
     if not isinstance(roles, list):
         roles = []
+    stale = await asyncio.to_thread(stale_worktrees, _repo_dirs(team_dir, cwd), now)
     week = now.strftime("%V")
-    prompt = build_prompt(label, persona, facts(active, done, backlog, costs, commits, budget, cutoff, closed, roles), week)
+    prompt = build_prompt(label, persona, facts(active, done, backlog, costs, commits, budget, cutoff, closed,
+                                                roles, stale), week)
     log.info("[report %s] starting (KW %s)", sid, week)
     text, tools = await scouts._run_agent(prompt, scout.get("model"), cwd, None)
     i = (text or "").find(MARKER)

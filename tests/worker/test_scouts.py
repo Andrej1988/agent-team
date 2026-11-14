@@ -347,3 +347,37 @@ def test_lead_handles_watchdog_alerts(tmp_path, monkeypatch):
     # handled alerts are not shown again
     run()
     assert "[101]" not in prompts[1] and "(none)" in prompts[1].split("## Open watchdog alerts")[1][:200]
+
+
+def test_weekly_report_lists_old_side_worktrees(tmp_path):
+    import subprocess
+    from datetime import datetime, timedelta
+    from agent_team.worker import report
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t.test", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t.test", "PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)}
+
+    def git(cwd, *a, date=None):
+        e = {**env, **({"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date} if date else {})}
+        subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, env=e)
+
+    root = tmp_path / "proj"
+    repo = root / "svc"
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "a", date="2026-10-01T10:00:00+00:00")
+    git(repo, "worktree", "add", "-q", "-b", "exp/old", str(root / ".worktrees" / "svc-old"))
+    git(root / ".worktrees" / "svc-old", "commit", "-q", "--allow-empty", "-m", "own",
+        date="2026-10-02T10:00:00+00:00")
+    git(repo, "worktree", "add", "-q", "-b", "fix/fresh", str(root / ".worktrees" / "svc-fresh"))
+    git(repo, "commit", "-q", "--allow-empty", "-m", "b")          # main moves on, today
+    git(root / ".worktrees" / "svc-fresh", "commit", "-q", "--allow-empty", "-m", "new")
+    task_wt = tmp_path / ".task-worktrees" / "p" / "7" / "svc"
+    git(repo, "worktree", "add", "-q", "-b", "task/7", str(task_wt))
+    git(task_wt, "commit", "-q", "--allow-empty", "-m", "t", date="2026-10-01T10:00:00+00:00")
+
+    now = datetime.now().astimezone()
+    stale = report.stale_worktrees([repo], now)
+    assert [(w["branch"], w["ahead"], w["behind"]) for w in stale] == [("exp/old", 1, 1)]
+    text = report.worktree_lines(stale)
+    assert "exp/old" in text and "1 eigene Commits nicht gemergt" in text and "svc-old" in text
+    assert report.worktree_lines([]) == "(keine)"

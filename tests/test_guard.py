@@ -72,7 +72,40 @@ def test_off_without_config(monkeypatch):
     monkeypatch.delenv(guard.ENV, raising=False)
     assert guard.load() is None
     assert guard.load('{"paths": [], "profiles": []}') is None
-    assert guard.sdk_hooks() is None and guard.sdk_matchers() == [] and guard.cli_settings() is None
+    # the worktree check has no config and stays on
+    assert guard.cli_settings() is not None
+
+
+@pytest.mark.parametrize("cmd, cwd", [
+    ("cd .worktrees/shop-api-x && docker compose up -d shop-api", "/repo"),
+    ("docker compose -f /repo/.worktrees/x/docker-compose.yml build svc", "/repo"),
+    ("docker compose up -d --build svc", "/home/u/git/.task-worktrees/shop/206/shop-api"),
+    ("docker build -t shop-api:latest .", "/repo/.worktrees/x"),
+    ("git status; docker-compose up -d", "/repo/.worktrees/x"),
+])
+def test_no_build_or_deploy_from_a_worktree(cmd, cwd):
+    assert guard.worktree_violation("Bash", {"command": cmd}, cwd)
+
+
+@pytest.mark.parametrize("cmd, cwd", [
+    ("docker compose up -d --no-deps svc", "/repo"),                          # live checkout
+    ("docker compose -p task-62 up -d db", "/x/.task-worktrees/e/62"),       # throwaway stack
+    ("docker run --rm -v $PWD:/app img pytest", "/x/.task-worktrees/e/62"),  # tests
+    ("docker compose logs --tail 20 svc", "/repo/.worktrees/x"),
+    ("git -C .worktrees/x log --oneline -3", "/repo"),
+])
+def test_worktree_check_lets_normal_work_through(cmd, cwd):
+    assert guard.worktree_violation("Bash", {"command": cmd}, cwd) is None
+
+
+def test_sdk_hook_refuses_worktree_builds_without_config(monkeypatch):
+    pytest.importorskip("claude_agent_sdk")
+    monkeypatch.delenv(guard.ENV, raising=False)
+    (m,) = guard.sdk_matchers()
+    out = asyncio.run(m.hooks[0]({"tool_name": "Bash", "cwd": "/r/.worktrees/x",
+                                  "tool_input": {"command": "docker compose up -d svc"}}, None, None))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "Arbeitsbaum" in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_sdk_hook_denies(monkeypatch):

@@ -1,5 +1,8 @@
 """Deploy guard: agents never deploy, enforced as a PreToolUse hook.
 
+Always on, without config: no `docker compose build/up` or `docker build`
+from a worktree (``worktree_violation``) — see below for the configurable part.
+
 On the work laptop the deploy target (a mounted network share the WAR files
 are copied to) is writable by the user, and the agents run with the user's
 rights. A prompt rule is not enough, so every agent session — task stages,
@@ -130,6 +133,36 @@ class Guard:
         return None
 
 
+# Always on, no config: building or starting services from a worktree. An
+# image built from a side branch silently reverts every fix that reached the
+# live branch since the branch was cut. Throwaway stacks with their own
+# project name (`-p task-62 …`) stay allowed: they cannot replace a service.
+_COMPOSE_BUILD_UP = re.compile(
+    r"\bdocker[\s-]+compose\b(?:(?!&&|\|\||;|\|).)*?\s(?:build|up)\b")
+_COMPOSE_OWN_PROJECT = re.compile(r"\s(?:-p|--project-name)[\s=]+\S+")
+_DOCKER_BUILD = re.compile(r"\bdocker\s+(?:buildx\s+)?build\b")
+_WORKTREE = re.compile(r"(?:^|/)\.(?:task-)?worktrees(?:/|$)")
+
+
+def worktree_violation(tool: str, tool_input: dict, cwd: Optional[str] = None) -> Optional[str]:
+    """German reason why a build/deploy from a worktree is refused, or None."""
+    if tool != "Bash":
+        return None
+    cmd = str((tool_input or {}).get("command") or "")
+    for part in re.split(r"&&|\|\||;|\n", cmd):
+        builds = (_COMPOSE_BUILD_UP.search(" " + part) and not _COMPOSE_OWN_PROJECT.search(part)) \
+            or _DOCKER_BUILD.search(part)
+        if not builds:
+            continue
+        where = [t for t in re.split(r"[\s=]+", cmd) if _WORKTREE.search(t)]
+        if where or (cwd and _WORKTREE.search(cwd)):
+            return (f"Bauen/Starten aus einem Arbeitsbaum ({(where or [cwd])[0]}). Ein Image aus einem "
+                    "Nebenzweig macht Fixes rückgängig, die seitdem auf dem Hauptzweig gelandet sind. "
+                    "Erst mergen (vorher den Hauptzweig in den Zweig holen, Tests), dann aus dem "
+                    "Live-Ordner bauen. Wegwerf-Stacks mit eigenem `-p <name>` sind erlaubt")
+    return None
+
+
 def deny_reason(why: str) -> str:
     return (f"Blockiert (Deploy-Sperre): {why}. Agenten deployen nie — kein Deploy-Profil, "
             "nichts auf das Deploy-Laufwerk. Baue und teste ohne Deploy-Profil "
@@ -152,17 +185,25 @@ def _deny(reason: str) -> dict:
                                    "permissionDecisionReason": reason}}
 
 
+def _check(d: dict, g: Optional[Guard]) -> Optional[str]:
+    """Deny reason for one hook input (deploy guard, then worktree builds)."""
+    tool, inp = d.get("tool_name") or "", d.get("tool_input") or {}
+    why = g.violation(tool, inp) if g else None
+    if why:
+        return deny_reason(why)
+    why = worktree_violation(tool, inp, d.get("cwd"))
+    return f"Blockiert: {why}." if why else None
+
+
 def sdk_matchers() -> list:
-    """HookMatcher list for ClaudeAgentOptions(hooks={"PreToolUse": ...}); [] without a guard."""
+    """HookMatcher list for ClaudeAgentOptions(hooks={"PreToolUse": ...}): the
+    worktree check always, the deploy guard when configured."""
     g = load()
-    if g is None:
-        return []
     from claude_agent_sdk import HookMatcher
 
     async def hook(input_data: dict, tool_use_id, context):
-        d = input_data or {}
-        why = g.violation(d.get("tool_name") or "", d.get("tool_input") or {})
-        return _deny(deny_reason(why)) if why else {}
+        why = _check(input_data or {}, g)
+        return _deny(why) if why else {}
 
     return [HookMatcher(matcher=MATCHER, hooks=[hook])]
 
@@ -174,9 +215,7 @@ def sdk_hooks() -> Optional[dict]:
 
 
 def cli_settings() -> Optional[str]:
-    """--settings JSON for a `claude -p` run, or None without a guard."""
-    if load() is None:
-        return None
+    """--settings JSON for a `claude -p` run (always: the worktree check)."""
     cmd = f"{shlex.quote(sys.executable)} -m agent_team.guard"
     return json.dumps({"hooks": {"PreToolUse": [
         {"matcher": MATCHER, "hooks": [{"type": "command", "command": cmd}]}]}})
@@ -187,10 +226,9 @@ def main() -> None:
         d = json.load(sys.stdin)
     except ValueError:
         return
-    g = load()
-    why = g.violation(d.get("tool_name") or "", d.get("tool_input") or {}) if g else None
+    why = _check(d, load())
     if why:
-        print(json.dumps(_deny(deny_reason(why))))
+        print(json.dumps(_deny(why)))
 
 
 if __name__ == "__main__":
