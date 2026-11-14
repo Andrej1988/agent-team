@@ -1398,6 +1398,11 @@ _execute_slots: list[tuple[int, frozenset[str] | None]] = []
 _in_flight_plans: set[int] = set()
 _in_flight_advise: set[tuple[int, int]] = set()   # (task_id, seq)
 _in_flight_stage_tasks: set[int] = set()
+# Release stages (confirm roles) fast-forward the live checkout — including
+# the root repo, which no task lists in its repos — and deploy. One at a
+# time per worker (= per project), whatever repos the tasks name.
+_release_slots: dict[int, int] = {}               # task_id -> seq
+_release_wait_noted: set[tuple[int, int]] = set()  # waits already posted
 
 
 def _readonly_slots_used() -> int:
@@ -1503,9 +1508,15 @@ async def _run_plan_slot(task: dict) -> None:
         _in_flight_plans.discard(tid)
 
 
-async def _run_stage_slot(task: dict, stage: dict, isolated: bool = False) -> None:
-    tid = task["id"]
-    seq = int(stage["seq"])
+def _release_blocker(tid: int) -> int | None:
+    """Another task whose release stage is in flight, if any."""
+    return next((t for t in _release_slots if t != tid), None)
+
+
+def _claim_stage_slot(task: dict, stage: dict, isolated: bool = False):
+    """Take the stage's slots synchronously, before its coroutine is
+    scheduled — so a second candidate in the same poll pass sees them."""
+    tid, seq = task["id"], int(stage["seq"])
     implement = stage.get("kind") == pipeline.KIND_IMPLEMENT
     repos: frozenset[str] | None = frozenset() if isolated else (frozenset(task.get("repos") or []) or None)
     slot = (tid, repos)
@@ -1514,19 +1525,46 @@ async def _run_stage_slot(task: dict, stage: dict, isolated: bool = False) -> No
         _execute_slots.append(slot)
     else:
         _in_flight_advise.add((tid, seq))
+    if stage.get("role") in CONFIRM_ROLES:
+        _release_slots[tid] = seq
+    return slot, implement
+
+
+def _release_stage_slot(task: dict, stage: dict, slot, implement: bool) -> None:
+    tid, seq = task["id"], int(stage["seq"])
+    _in_flight_stage_tasks.discard(tid)
+    if implement:
+        try:
+            _execute_slots.remove(slot)
+        except ValueError:
+            pass
+    else:
+        _in_flight_advise.discard((tid, seq))
+    if _release_slots.get(tid) == seq:
+        del _release_slots[tid]
+    _release_wait_noted.discard((tid, seq))
+
+
+async def _run_stage_slot(task: dict, stage: dict, isolated: bool = False, claimed=None) -> None:
+    slot, implement = claimed or _claim_stage_slot(task, stage, isolated)
     try:
         await stage_one(task, stage)
     except Exception:
-        log.exception("[task %s] stage %s background failed", tid, seq)
+        log.exception("[task %s] stage %s background failed", task["id"], stage["seq"])
     finally:
-        _in_flight_stage_tasks.discard(tid)
-        if implement:
-            try:
-                _execute_slots.remove(slot)
-            except ValueError:
-                pass
-        else:
-            _in_flight_advise.discard((tid, seq))
+        _release_stage_slot(task, stage, slot, implement)
+
+
+async def _note_release_wait(task: dict, stage: dict, other: int) -> None:
+    """Say once in the stage log (and so in the task chat) why a released
+    stage does not start yet."""
+    key = (task["id"], int(stage["seq"]))
+    if key in _release_wait_noted:
+        return
+    _release_wait_noted.add(key)
+    log.info("[task %s] release stage %s waits for task %s", key[0], key[1], other)
+    await _safe_append(key[0], f"stage_{key[1]}", _event(
+        "text", text=f"⏳ Wartet auf den laufenden Release von #{other} — startet danach von selbst."))
 
 
 async def poll_loop() -> None:
@@ -1634,12 +1672,17 @@ async def poll_loop() -> None:
             if stage is None:
                 continue  # backend flipped it meanwhile; next poll re-checks
             isolated = stage.get("role") not in CONFIRM_ROLES and _uses_workspace(task, stages)
+            if stage.get("role") in CONFIRM_ROLES and (other := _release_blocker(task["id"])) is not None:
+                if (task["id"], int(stage["seq"])) not in _release_wait_noted:
+                    bg.add(asyncio.create_task(_note_release_wait(task, stage, other)))
+                continue  # one release per project at a time
             if stage.get("kind") == pipeline.KIND_IMPLEMENT:
                 if not _can_acquire_execute(task, isolated):
                     continue  # repo held by another execute/implement stage
             elif _readonly_slots_used() >= MAX_PARALLEL_REFINES:
                 continue
-            bg.add(asyncio.create_task(_run_stage_slot(task, stage, isolated)))
+            claimed = _claim_stage_slot(task, stage, isolated)
+            bg.add(asyncio.create_task(_run_stage_slot(task, stage, isolated, claimed)))
 
         # --- Refines: global cap, no per-repo gating (read-only).
         # A task is pickup-eligible if either:
