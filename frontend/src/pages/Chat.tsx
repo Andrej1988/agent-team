@@ -457,6 +457,8 @@ export default function Chat() {
   const [info, setInfo] = useState<ChatChannel | null>(null)
   const [events, setEvents] = useState<ChatEvent[]>([])
   const [error, setError] = useState<string | null>(null)
+  // „Eigene Antwort schreiben“ on a stage question: the stage the next message answers.
+  const [own, setOwn] = useState<{ id: number; seq: number; card?: number } | null>(null)
   const [text, setText] = useState('')
   const [quote, setQuote] = useState<string | null>(null)
   const [images, setImages] = useState<{ name: string; data: string }[]>([])
@@ -686,6 +688,14 @@ export default function Chat() {
         setTimeout(() => inputRef.current?.focus(), 0)
         return
       }
+      const ow = /^own:(\d+):(\d+)$/.exec(b.data)
+      if (ow) {
+        // My own answer instead of the offered options: the next message
+        // goes straight to the stage, not through the lead.
+        setOwn({ id: Number(ow[1]), seq: Number(ow[2]), card: seq })
+        setTimeout(() => inputRef.current?.focus(), 0)
+        return
+      }
       if (/^askfix:\d+$/.test(b.data)) {
         const id = b.data.slice(7)
         await api.service.command(channel, { text: b.data, label: b.label, button_seq: seq })
@@ -882,6 +892,13 @@ export default function Chat() {
     setSending(true)
     try {
       if (service) await api.service.command(channel, { text: text.trim() })
+      else if (own && info?.project) {
+        await api.lead.answer(info.project, own.id, own.seq, text.trim())
+        await api.service.command(channel, { text: `✍ Antwort an Stufe ${own.seq}:\n${text.trim()}`.slice(0, 2000),
+                                             button_seq: own.card })
+        setOwn(null)
+        refreshTask()
+      }
       else await api.chat.message(channel, { text, quote, images })
       setText(''); setQuote(null); setImages([])
       followRef.current = true
@@ -1015,6 +1032,12 @@ export default function Chat() {
       </div>
 
       <div className="border-t border-slate-800 bg-slate-900 px-3 pb-2 pt-2">
+        {own && (
+          <div className="mb-1.5 flex items-start gap-2 rounded border-l-2 border-amber-400 bg-slate-800 px-2 py-1 text-xs text-amber-100">
+            <div className="flex-1">Deine Antwort geht direkt an Stufe {own.seq} von #{own.id}.</div>
+            <button onClick={() => setOwn(null)} aria-label="Eigene Antwort abbrechen"><X size={13} /></button>
+          </div>
+        )}
         {quote && (
           <div className="mb-1.5 flex items-start gap-2 rounded border-l-2 border-sky-400 bg-slate-800 px-2 py-1 text-xs text-slate-300">
             <div className="line-clamp-2 flex-1 whitespace-pre-wrap">{quote}</div>
@@ -1049,7 +1072,7 @@ export default function Chat() {
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !TOUCH_INPUT()) { e.preventDefault(); sendMsg() } }}
             enterKeyHint={TOUCH_INPUT() ? 'enter' : 'send'}
             // Short enough for one line on a phone: a wrapped placeholder made the field scroll.
-            placeholder={service ? 'Befehl, z. B. /status …' : busy ? 'Ergänzung …' : 'Nachricht …'}
+            placeholder={service ? 'Befehl, z. B. /status …' : own ? `Antwort an Stufe ${own.seq} …` : busy ? 'Ergänzung …' : 'Nachricht …'}
             className="min-h-[40px] min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" />
           <button onClick={sendMsg} disabled={sending || (!text.trim() && images.length === 0)}
             className="mb-0.5 rounded-lg bg-sky-600 p-2.5 text-white disabled:opacity-40" aria-label="Senden">

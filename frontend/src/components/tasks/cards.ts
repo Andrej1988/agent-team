@@ -6,7 +6,7 @@ type CardButton = { data: string }
 // The task a card is about: proposal (start:<id>), tidy card (park/close/done/
 // delete/keep:<id>, merge:<id>:<into>) or a step of a started task. Cards
 // without such a button (✅ steps: apply, deploy, archive) never go stale.
-export const CARD_TASK = /^(?:start|park|close|done|delete|keep|merge|retry|replan|next|skip|opt|resume|restore):(\d+)/
+export const CARD_TASK = /^(?:start|park|close|done|delete|keep|merge|retry|replan|next|skip|opt|own|resume|restore):(\d+)/
 const TIDY_CARD = /^(?:keep|delete|merge):/
 
 function taskFinished(t: CardTask): string | null {

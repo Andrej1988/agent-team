@@ -175,9 +175,10 @@ def changes(task: dict, stages: list[dict], old: Optional[dict]) -> list[dict]:
             card = {"title": f"❓ {label} fragt", "buttons": button_rows(available_actions(task, stages))}
             if opts:
                 listed = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(opts))
-                card["text"] = f"{q}\n\n{listed}\n\nTipp eine Antwort an — oder schreib hier, der Lead gibt es weiter."
+                card["text"] = (f"{q}\n\n{listed}\n\nTipp eine Antwort an — oder „Eigene Antwort schreiben“: "
+                                "dein Text geht direkt an die Stufe.")
             else:
-                card["text"] = f"{q}\n\nAntworte hier — der Lead gibt es weiter."
+                card["text"] = f"{q}\n\nTipp „Eigene Antwort schreiben“: dein Text geht direkt an die Stufe."
             out.append(card)
         elif st == "skipped":
             out.append({"title": f"↷ {label} übersprungen", "text": "übersprungen"})
@@ -333,6 +334,8 @@ def available_actions(task: dict, stages: list[dict]) -> list[dict]:
         seq = asking["seq"]
         out = [_action(f"{i + 1}. {o}" if len(o) <= 56 else f"{i + 1}. {o[:54]}…", f"opt:{tid}:{seq}:{i}", "primary")
                for i, o in enumerate(str(x) for x in (asking.get("options") or [])[:4])]
+        # My own answer instead of one of the offered options: straight to the stage.
+        out.append(_action("Eigene Antwort schreiben", f"own:{tid}:{seq}", "primary" if not out else "secondary"))
         if asking["role"] not in agent_roles.GATE_ROLES:
             out.append(_action(f"Stufe {seq} überspringen", f"skip:{tid}:{seq}"))
         return out + [_action("Task stoppen", f"stop:{tid}", "danger", "Task stoppen?")]

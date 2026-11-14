@@ -223,7 +223,7 @@ def test_every_stuck_or_waiting_state_has_a_way_out(lead_project):
     # question: answers plus leaving it
     q = {"seq": 2, "role": "data-engineer", "status": "awaiting_input", "options": ["A", "B"]}
     a = mirror.available_actions(_task("awaiting_input"), [impl, q])
-    assert _data(a) == ["opt:5:2:0", "opt:5:2:1", "skip:5:2", "stop:5"] and a[-1]["confirm"]
+    assert _data(a) == ["opt:5:2:0", "opt:5:2:1", "own:5:2", "skip:5:2", "stop:5"] and a[-1]["confirm"]
     # stopped by the user with stages left
     assert "resume:5" in _data(mirror.available_actions(_task("blocked"), [impl, deploy]))
     # running: only stopping, and it asks first
@@ -306,3 +306,15 @@ def test_old_failed_stage_that_later_stages_passed_does_not_block(lead_project):
     assert tasks_db.blocking_stage(stuck)["seq"] == 1
     acts = _data(mirror.available_actions(_task("plan_ready"), stuck))
     assert "next:5" not in acts and "retry:5:1" in acts
+
+
+def test_stage_question_offers_an_own_answer(lead_project):
+    """Options are suggestions: the user can always write their own answer,
+    which goes straight to the stage."""
+    asking = [{"seq": 1, "role": "data-engineer", "status": "awaiting_input",
+               "options": ["Folien nur suchbar", "je Rolle", "entfernen"]}]
+    acts = mirror.available_actions(_task("awaiting_input"), asking)
+    assert "own:5:1" in _data(acts) and "opt:5:1:0" in _data(acts)
+    plain = [{"seq": 2, "role": "data-engineer", "status": "awaiting_input", "options": []}]
+    acts = mirror.available_actions(_task("awaiting_input"), plain)
+    assert acts[0]["data"] == "own:5:2" and acts[0]["kind"] == "primary"

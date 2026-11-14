@@ -114,6 +114,8 @@ export const api = {
       send<{ deleted: number; already?: number }>(`/p/${project}/api/watchdog/dismiss/${key}`, 'POST'),
     merge: (project: string, id: number, into: number) =>
       send<Task>(`/p/${project}/api/tasks/${id}/merge`, 'POST', { into }),
+    answer: (project: string, id: number, seq: number, text: string) =>
+      send<Task>(`/p/${project}/api/tasks/${id}/stages/${seq}/answer`, 'POST', { text }),
     option: (project: string, id: number, seq: number, index: number) =>
       send<Task>(`/p/${project}/api/tasks/${id}/stages/${seq}/answer-option`, 'POST', { index }),
     remove: (project: string, id: number) => send<void>(`/p/${project}/api/tasks/${id}`, 'DELETE'),
