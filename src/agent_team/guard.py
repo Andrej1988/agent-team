@@ -2,6 +2,7 @@
 
 Always on, without config: no `docker compose build/up` or `docker build`
 from a worktree (``worktree_violation``) — see below for the configurable part.
+Optional: memory limits for `docker run` (``DockerLimits``, env AT_DOCKER_LIMITS).
 
 On the work laptop the deploy target (a mounted network share the WAR files
 are copied to) is writable by the user, and the agents run with the user's
@@ -163,6 +164,118 @@ def worktree_violation(tool: str, tool_input: dict, cwd: Optional[str] = None) -
     return None
 
 
+# Configurable: memory limits for containers the agents start themselves.
+# 2026-11: three backtests started with a bare `docker run` took ~14 GB each
+# and pushed the host into a global OOM. Env ``AT_DOCKER_LIMITS`` = JSON
+# ``{"max_memory": "16g", "cgroup_parent": "agent-tasks.slice"}``: every
+# `docker run` / `docker create` must set ``--memory`` (at most max_memory)
+# and, if configured, ``--cgroup-parent`` to that slice (a shared cap for all
+# agent containers together). Unset = no check. `docker compose run` is not
+# checked: compose services carry their own limits.
+LIMITS_ENV = "AT_DOCKER_LIMITS"
+_RUN_BOOL_SHORT = set("diPqt")
+_RUN_BOOL_LONG = {
+    "--detach", "--rm", "--interactive", "--tty", "--init", "--privileged",
+    "--publish-all", "--read-only", "--no-healthcheck", "--oom-kill-disable",
+    "--quiet", "--disable-content-trust", "--sig-proxy", "--help",
+}
+_SIZE = re.compile(r"^(\d+(?:\.\d+)?)([kmgt]?)i?b?$", re.I)
+
+
+def parse_size(val: str) -> Optional[int]:
+    """Docker memory size ("512m", "16g", "1.5GB") in bytes, or None."""
+    m = _SIZE.match(str(val).strip())
+    if not m:
+        return None
+    mult = {"": 1, "k": 1 << 10, "m": 1 << 20, "g": 1 << 30, "t": 1 << 40}[m.group(2).lower()]
+    return int(float(m.group(1)) * mult)
+
+
+def _run_options(toks: list[str]) -> Optional[dict[str, str]]:
+    """Options of the first `docker run|create` in toks ({flag: value}), or None."""
+    for i, t in enumerate(toks):
+        if os.path.basename(t) != "docker":
+            continue
+        rest = toks[i + 1:]
+        if rest[:1] == ["container"]:
+            rest = rest[1:]
+        if rest[:1] not in (["run"], ["create"]):
+            continue
+        opts: dict[str, str] = {}
+        j = 1
+        while j < len(rest):
+            a = rest[j]
+            if a == "--" or not a.startswith("-") or a == "-":
+                break                                   # image reached
+            if a.startswith("--"):
+                name, eq, val = a.partition("=")
+                if not eq and name not in _RUN_BOOL_LONG:
+                    val = rest[j + 1] if j + 1 < len(rest) else ""
+                    j += 1
+                opts[name] = val
+            elif all(c in _RUN_BOOL_SHORT for c in a[1:]):
+                pass                                    # -d, -it, -dit
+            else:
+                name, val = a[:2], a[2:]
+                if not val:
+                    val = rest[j + 1] if j + 1 < len(rest) else ""
+                    j += 1
+                opts[name] = val
+            j += 1
+        return opts
+    return None
+
+
+@dataclass
+class DockerLimits:
+    max_memory: str = ""
+    cgroup_parent: str = ""
+
+    def violation(self, tool: str, tool_input: dict) -> Optional[str]:
+        if tool != "Bash":
+            return None
+        cmd = str((tool_input or {}).get("command") or "")
+        limit = parse_size(self.max_memory) if self.max_memory else None
+        for part in re.split(r"&&|\|\||;|\||\n", cmd):
+            try:
+                toks = shlex.split(part, posix=True)
+            except ValueError:
+                toks = part.split()
+            opts = _run_options(toks)
+            if opts is None:
+                continue
+            mem = opts.get("--memory", opts.get("-m"))
+            if limit:
+                size = parse_size(mem) if mem else None
+                if not size:
+                    return f"`docker run` ohne Speicherlimit — setze `--memory {self.max_memory}` (oder weniger)"
+                if size > limit:
+                    return f"`--memory {mem}` liegt über dem Höchstwert {self.max_memory}"
+            if self.cgroup_parent and opts.get("--cgroup-parent") != self.cgroup_parent:
+                return f"`docker run` ohne `--cgroup-parent {self.cgroup_parent}` (gemeinsames Speicherbudget aller Agenten-Container)"
+        return None
+
+
+def limits_reason(why: str, lim: DockerLimits) -> str:
+    flags = " ".join(f for f in (f"--memory {lim.max_memory}" if lim.max_memory else "",
+                                 f"--cgroup-parent {lim.cgroup_parent}" if lim.cgroup_parent else "") if f)
+    return (f"Blockiert (Speicherlimit): {why}. Container ohne Limit haben den Host schon in "
+            f"den OOM getrieben. Starte ihn mit `docker run {flags} …`; braucht der Lauf mehr, "
+            "verkleinere ihn (Zeitraum/Symbole teilen, nacheinander statt parallel).")
+
+
+def load_limits(raw: Optional[str] = None) -> Optional[DockerLimits]:
+    raw = os.environ.get(LIMITS_ENV, "") if raw is None else raw
+    if not raw.strip():
+        return None
+    data = json.loads(raw)
+    lim = DockerLimits(max_memory=str(data.get("max_memory") or ""),
+                       cgroup_parent=str(data.get("cgroup_parent") or ""))
+    if lim.max_memory and not parse_size(lim.max_memory):
+        raise ValueError(f"{LIMITS_ENV}: max_memory {lim.max_memory!r} ist keine Größe")
+    return lim if (lim.max_memory or lim.cgroup_parent) else None
+
+
 def deny_reason(why: str) -> str:
     return (f"Blockiert (Deploy-Sperre): {why}. Agenten deployen nie — kein Deploy-Profil, "
             "nichts auf das Deploy-Laufwerk. Baue und teste ohne Deploy-Profil "
@@ -185,24 +298,27 @@ def _deny(reason: str) -> dict:
                                    "permissionDecisionReason": reason}}
 
 
-def _check(d: dict, g: Optional[Guard]) -> Optional[str]:
-    """Deny reason for one hook input (deploy guard, then worktree builds)."""
+def _check(d: dict, g: Optional[Guard], lim: Optional[DockerLimits] = None) -> Optional[str]:
+    """Deny reason for one hook input (deploy guard, worktree builds, container limits)."""
     tool, inp = d.get("tool_name") or "", d.get("tool_input") or {}
     why = g.violation(tool, inp) if g else None
     if why:
         return deny_reason(why)
     why = worktree_violation(tool, inp, d.get("cwd"))
-    return f"Blockiert: {why}." if why else None
+    if why:
+        return f"Blockiert: {why}."
+    why = lim.violation(tool, inp) if lim else None
+    return limits_reason(why, lim) if why else None
 
 
 def sdk_matchers() -> list:
     """HookMatcher list for ClaudeAgentOptions(hooks={"PreToolUse": ...}): the
     worktree check always, the deploy guard when configured."""
-    g = load()
+    g, lim = load(), load_limits()
     from claude_agent_sdk import HookMatcher
 
     async def hook(input_data: dict, tool_use_id, context):
-        why = _check(input_data or {}, g)
+        why = _check(input_data or {}, g, lim)
         return _deny(why) if why else {}
 
     return [HookMatcher(matcher=MATCHER, hooks=[hook])]
@@ -226,7 +342,7 @@ def main() -> None:
         d = json.load(sys.stdin)
     except ValueError:
         return
-    why = _check(d, load())
+    why = _check(d, load(), load_limits())
     if why:
         print(json.dumps(_deny(why)))
 

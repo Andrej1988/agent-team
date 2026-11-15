@@ -147,3 +147,71 @@ def test_local_merges_and_requires_guard(tmp_path):
     assert not any("deploy_guard" in p for p in local.check(local.load_config(tmp_path / "none.yaml")))
     (tmp_path / "bad.yaml").write_text("deploy_guard: {patterns: ['(']}\n")
     assert any("ungültig" in p for p in local.check(local.load_config(tmp_path / "bad.yaml")))
+
+
+# -- container memory limits (AT_DOCKER_LIMITS) ---------------------------------
+LIM = guard.DockerLimits(max_memory="16g")
+
+
+@pytest.mark.parametrize("cmd", [
+    "docker run --rm --name task-1-bt img python -m src.backtests.x --start-date 2016-01-01",
+    "docker run -d --rm img",
+    "cd /w && docker run --rm -v /w:/app img pytest -q",
+    "docker container run --rm img",
+    "docker create img",
+    "docker run --rm --memory 32g img",
+    "docker run --rm -m32g img",
+    "docker run --rm --memory=64G img",
+    "docker run --rm img python -m 4g",        # -m after the image is the command's
+    "echo ok; docker run -it img sh",
+])
+def test_limits_block(cmd):
+    assert LIM.violation("Bash", {"command": cmd})
+
+
+@pytest.mark.parametrize("cmd", [
+    "docker run --rm --memory 8g --name task-1-bt img python -m src.backtests.x",
+    "docker run --rm -m 16g img",
+    "docker run -dit -m16g img",
+    "docker run --rm --memory=1.5GB -e X=1 img",
+    "docker ps -a",
+    "docker exec demo-app python -m x",
+    "docker compose -p task-3 run --rm app pytest",
+    "docker logs task-1-bt | tail",
+])
+def test_limits_allow(cmd):
+    assert LIM.violation("Bash", {"command": cmd}) is None
+
+
+def test_limits_cgroup_parent():
+    lim = guard.DockerLimits(max_memory="16g", cgroup_parent="agent-tasks.slice")
+    assert lim.violation("Bash", {"command": "docker run -m 8g img"})
+    assert lim.violation("Bash", {"command": "docker run -m 8g --cgroup-parent agent-tasks.slice img"}) is None
+
+
+def test_limits_load(monkeypatch):
+    monkeypatch.delenv(guard.LIMITS_ENV, raising=False)
+    assert guard.load_limits() is None
+    assert guard.load_limits('{"max_memory": "16g"}').max_memory == "16g"
+    with pytest.raises(ValueError):
+        guard.load_limits('{"max_memory": "lots"}')
+
+
+def test_sdk_hook_denies_unlimited_docker_run(monkeypatch):
+    monkeypatch.delenv(guard.ENV, raising=False)
+    monkeypatch.setenv(guard.LIMITS_ENV, '{"max_memory": "16g"}')
+    hook = guard.sdk_matchers()[0].hooks[0]
+    out = asyncio.run(hook({"tool_name": "Bash", "tool_input": {"command": "docker run --rm img"}}, None, None))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "--memory 16g" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    ok = asyncio.run(hook({"tool_name": "Bash", "tool_input": {"command": "docker run -m 8g img"}}, None, None))
+    assert ok == {}
+
+
+def test_cli_hook_denies_unlimited_docker_run(monkeypatch):
+    env = {"AT_DOCKER_LIMITS": '{"max_memory": "16g"}', "PYTHONPATH": "src"}
+    d = json.dumps({"tool_name": "Bash", "tool_input": {"command": "docker run img"}})
+    import os
+    r = subprocess.run([sys.executable, "-m", "agent_team.guard"], input=d, capture_output=True,
+                       text=True, env={**os.environ, **env})
+    assert "deny" in r.stdout

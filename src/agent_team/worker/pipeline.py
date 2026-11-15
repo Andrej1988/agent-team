@@ -97,6 +97,10 @@ real bots. Edit files in the working tree only:
 - New throwaway containers for tests are fine: `docker run --rm` with a
   unique `--name task-<id>-...`, no `--restart`, no broker keys / `.env`
   of a live or paper bot, and never a name of an existing service.
+- Give every container a memory limit (`--memory 8g`, more only if needed;
+  the hook refuses `docker run` without one and names any further required
+  flag, e.g. `--cgroup-parent`) and run heavy jobs (backtests
+  over years) one after another, not several in parallel.
 - No deploy, not even paper. List every deploy/recreate step the user must
   run in `next_hint`."""
 
