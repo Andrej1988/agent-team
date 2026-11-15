@@ -90,6 +90,11 @@ CAPABILITIES_BLURB = (
     "`docker logs`, `docker ps` and `docker compose` work against the host "
     "daemon — this is your delegation path for anything that needs the "
     "project's dependencies (tests, scripts, DB access, GPU).\n"
+    "    Deployments may route Docker through a restricting proxy (one socket "
+    "per project): only your project's containers, bind mounts only below "
+    "the project's paths, no privileged or host options. Refusals start with "
+    "`agent-docker-proxy:` — don't work around them; tell the user what you "
+    "needed (redeploying the agent services themselves is the user's job).\n"
     "  - No direct GPU access (no /dev/nvidia*); HTTP to the public internet.\n"
     "\n"
     "Execution pattern: if a task needs the project's deps, DON'T try to run "
@@ -737,7 +742,7 @@ class ChannelRuntime:
                 # without an approval prompt.
                 add_dirs=[str(channel_dir(self.ch.id) / "inbox")],
                 system_prompt={"type": "preset", "preset": "claude_code", "append": self.handoff_append() + QUIET_NOTE + scope.prompt_note(self.ch.project)},
-                env=git_identity.chat(self.ch.id),
+                env={**git_identity.chat(self.ch.id), **guard.docker_env(self.ch.project)},
                 max_buffer_size=SDK_MAX_BUFFER_BYTES,
             )
 
@@ -799,7 +804,7 @@ class ChannelRuntime:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, cwd=self.ch.cwd, stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, **git_identity.chat(self.ch.id)})
+                env={**os.environ, **git_identity.chat(self.ch.id), **guard.docker_env(self.ch.project)})
             self.codex_proc = proc
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode()), timeout=1200)

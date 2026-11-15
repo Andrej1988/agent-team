@@ -37,7 +37,7 @@ from fastapi.staticfiles import StaticFiles
 
 from contextlib import asynccontextmanager
 
-from . import budget, inbox, projects, push
+from . import budget, deploy, inbox, projects, push
 from .chat import web as chat_web
 from .chat import service as chat_service
 from .tasks import db as tasks_db
@@ -330,6 +330,7 @@ app.include_router(
 
 app.include_router(chat_web.router)
 app.include_router(chat_service.router)
+app.include_router(deploy.router)
 
 
 @app.get("/api/projects")

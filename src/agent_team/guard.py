@@ -276,6 +276,21 @@ def load_limits(raw: Optional[str] = None) -> Optional[DockerLimits]:
     return lim if (lim.max_memory or lim.cgroup_parent) else None
 
 
+# Per-project Docker socket: in deployments where agents reach Docker only
+# through a restricting proxy with one socket per project, env
+# ``AT_DOCKER_SOCK_DIR`` names the directory holding ``<project>/docker.sock``.
+# Chat sessions of a project get DOCKER_HOST pointing there (fail-closed: no
+# socket for the project = no Docker). Unset = inherit the process env.
+SOCK_DIR_ENV = "AT_DOCKER_SOCK_DIR"
+
+
+def docker_env(project: str) -> dict[str, str]:
+    d = os.environ.get(SOCK_DIR_ENV, "").strip()
+    if not d:
+        return {}
+    return {"DOCKER_HOST": f"unix://{d.rstrip('/')}/{project}/docker.sock"}
+
+
 def deny_reason(why: str) -> str:
     return (f"Blockiert (Deploy-Sperre): {why}. Agenten deployen nie — kein Deploy-Profil, "
             "nichts auf das Deploy-Laufwerk. Baue und teste ohne Deploy-Profil "

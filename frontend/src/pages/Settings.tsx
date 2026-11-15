@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type ClaudeAuth } from '../api/client'
+import { api, type ClaudeAuth, type DeployStatus } from '../api/client'
 import { BudgetSettings } from '../components/Budget'
 
 function b64ToBytes(s: string): ArrayBuffer {
@@ -69,6 +69,95 @@ function ClaudeLogin() {
   )
 }
 
+// Deploy button: agents cannot redeploy their own services (they only reach
+// Docker through a restricting proxy), so the user does it here. A host-side
+// deployer builds exactly the commit shown and restarts web, workers and chat.
+function DeploySection() {
+  const [st, setSt] = useState<DeployStatus | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState(false)
+  const [showLog, setShowLog] = useState(false)
+  const load = () => api.deploy.status().then((s) => { setSt(s); setErr(null) }, (e) => setErr(String(e)))
+  useEffect(() => { load() }, [])
+  const running = st?.job?.state === 'running' || !!st?.queued
+  useEffect(() => {
+    if (!running) return
+    const id = window.setInterval(load, 3000)
+    return () => window.clearInterval(id)
+  }, [running])
+  if (!st || !st.enabled) return null
+  const p = st.pending
+  const upToDate = !!p && p.deployed === p.head
+  const busy = st.busy ?? []
+  const start = async () => {
+    if (!p) return
+    setErr(null)
+    try { await api.deploy.start(p.head); setConfirm(false); setShowLog(true); await load() } catch (e) { setErr(String(e)) }
+  }
+  const job = st.job
+  const when = (t?: number) => (t ? new Date(t * 1000).toLocaleString('de-DE') : '')
+  return (
+    <section className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
+      <h2 className="font-semibold text-slate-100">Agenten-Team deployen</h2>
+      <p className="mt-1 text-sm text-slate-400">
+        Baut den angezeigten Commit und startet {(st.services ?? []).join(', ') || 'die Dienste'} neu.
+        Laufende Chat-Antworten und Task-Stufen werden dabei abgebrochen.
+      </p>
+      {st.error && <div className="mt-2 text-xs text-rose-300">Deployer: {st.error}</div>}
+      {!p ? <div className="mt-2 text-sm text-amber-300">Noch kein Status vom Deployer.</div> : (
+        <div className="mt-2 space-y-2 text-sm">
+          <div className="text-slate-300">
+            Live: <code className="text-slate-100">{p.deployed?.slice(0, 10) ?? '—'}</code>
+            {' · '}{p.branch}: <code className="text-slate-100">{p.head.slice(0, 10)}</code> {p.head_subject}
+          </div>
+          {upToDate ? <div className="text-emerald-300">✓ Live-Stand ist aktuell</div> : (
+            <>
+              <div className="text-slate-300">{p.commits.length} neue Commit(s):</div>
+              <ul className="max-h-48 overflow-auto rounded bg-slate-900/60 p-2 text-xs text-slate-300">
+                {p.commits.map((c) => <li key={c.sha}><code>{c.sha}</code> {c.subject} <span className="text-slate-500">({c.author})</span></li>)}
+              </ul>
+              {p.files.length > 0 && (
+                <details className="text-xs text-slate-400"><summary>Geänderte Dateien</summary>
+                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap">{p.files.join('\n')}</pre></details>
+              )}
+            </>
+          )}
+          {busy.length > 0 && (
+            <div className="rounded border border-amber-700 bg-amber-900/30 p-2 text-xs text-amber-200">
+              Gerade aktiv (wird abgebrochen): {busy.map((b) => `${b.label}${b.kind === 'task' ? ' (Task-Stufe)' : ''}`).join(', ')}
+            </div>
+          )}
+          {!running && !confirm && (
+            <button onClick={() => setConfirm(true)} className="rounded-lg bg-sky-600 px-4 py-2 text-white hover:bg-sky-500">
+              {upToDate ? 'Trotzdem neu deployen' : 'Deployen'}
+            </button>
+          )}
+          {!running && confirm && (
+            <div className="flex flex-wrap gap-2">
+              <button onClick={start} className="rounded-lg bg-rose-600 px-4 py-2 text-white hover:bg-rose-500">
+                Ja, {p.head.slice(0, 10)} jetzt deployen
+              </button>
+              <button onClick={() => setConfirm(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-slate-200">Abbrechen</button>
+            </div>
+          )}
+        </div>
+      )}
+      {st.queued && !job?.state && <div className="mt-2 text-sm text-sky-300">Auftrag wartet auf den Deployer …</div>}
+      {job && (
+        <div className="mt-3 text-sm">
+          <div className={job.state === 'failed' ? 'text-rose-300' : job.state === 'done' ? 'text-emerald-300' : 'text-sky-300'}>
+            {job.state === 'running' ? '⏳ Deploy läuft' : job.state === 'done' ? '✓ Zuletzt deployt' : '✗ Deploy fehlgeschlagen'}
+            {' '}<code>{job.commit?.slice(0, 10)}</code> · {when(job.finished ?? job.started)} · {job.by}
+          </div>
+          <button onClick={() => setShowLog(!showLog)} className="text-xs text-slate-400 underline">{showLog ? 'Log ausblenden' : 'Log anzeigen'}</button>
+          {showLog && <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-900/60 p-2 text-xs text-slate-400">{(job.log ?? []).slice(-80).join('\n')}</pre>}
+        </div>
+      )}
+      {err && <div className="mt-2 text-xs text-rose-300">{err}</div>}
+    </section>
+  )
+}
+
 export default function Settings() {
   const [user, setUser] = useState('')
   const [log, setLog] = useState<string[]>([])
@@ -106,6 +195,7 @@ export default function Settings() {
       <div className="text-sm text-slate-400">Angemeldet als {user || '…'}</div>
       <ClaudeLogin />
       <BudgetSettings />
+      <DeploySection />
       <section className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
         <h2 className="font-semibold text-slate-100">Benachrichtigungen</h2>
         <p className="mt-1 text-sm text-slate-400">

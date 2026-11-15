@@ -53,6 +53,10 @@ async function send<T>(path: string, method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export const api = {
   me: () => get<{ user: string }>('/api/me'),
+  deploy: {
+    status: () => get<DeployStatus>('/api/deploy'),
+    start: (commit: string) => send<{ queued: unknown }>('/api/deploy', 'POST', { commit }),
+  },
   projects: () => get<ProjectInfo[]>('/api/projects'),
   inbox: () => get<InboxItem[]>('/api/inbox'),
   chat: {
@@ -615,4 +619,18 @@ export interface PlanUpdateBody {
   max_rounds?: number
   max_stages?: number
   budget_usd?: number | null
+}
+
+// Deploy button (settings): state written by the host-side deployer.
+export interface DeployStatus {
+  enabled: boolean
+  pending?: { branch: string; head: string; head_subject: string; deployed: string | null
+    commits: { sha: string; author: string; subject: string }[]; files: string[] } | null
+  job?: { id: string; by: string; commit: string; state: 'running' | 'done' | 'failed'
+    started: number; finished?: number; log: string[] } | null
+  queued?: { id: string; by: string; commit: string; ts: number } | null
+  updated?: number
+  error?: string | null
+  services?: string[]
+  busy?: { kind: 'chat' | 'task' | 'unknown'; id: string; label: string; project: string }[]
 }
