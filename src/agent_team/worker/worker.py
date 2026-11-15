@@ -37,7 +37,7 @@ from .. import log_redaction
 from .. import budget, git_identity, guard
 from ..agent_notes import QUIET_NOTE
 from ..chat import claude_login
-from . import evidence, monitor_control, pipeline, scouts, workspace
+from . import evidence, monitor_control, pipeline, scouts, task_containers, workspace
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -1368,16 +1368,19 @@ def _workspace_tick() -> None:
             if task is None or task.get("status") == "closed":
                 workspace.cleanup(WS, tid, drop_branch=True)
                 log.info("[task %s] workspace removed (task %s)", tid, "deleted" if task is None else "closed")
+                task_containers.remove(tid)
             elif task.get("status") == "done" and workspace.APPLY_MODE == "pr":
                 prs = workspace.pr_states(WS, tid)
                 if prs and all(v in ("MERGED", "CLOSED") for v in prs.values()):
                     workspace.write_state(WS, tid, {"prs": prs})
                     workspace.cleanup(WS, tid, drop_branch=True)
                     log.info("[task %s] workspace removed (done, PRs %s)", tid, prs)
+                    task_containers.remove(tid)
             elif task.get("status") == "done" and not workspace.state(WS, tid)["pending"]:
                 workspace.write_state(WS, tid)
                 workspace.cleanup(WS, tid)
                 log.info("[task %s] workspace removed (done, merged)", tid)
+                task_containers.remove(tid)
         except Exception as e:  # noqa: BLE001
             log.warning("[task %s] workspace sweep: %s", tid, e)
 
