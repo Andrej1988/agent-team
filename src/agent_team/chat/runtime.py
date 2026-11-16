@@ -417,6 +417,9 @@ class ChannelRuntime:
         self.pending: dict[str, _Pending] = {}
         self.turn_task: Optional[asyncio.Task] = None
         self._auth_failed = False
+        # (prompt, wall time) of a turn the expired login broke — repeated
+        # once the login is renewed (retry_after_login).
+        self.auth_retry: Optional[tuple[str, float]] = None
         self.last_active = time.monotonic()
 
     # ---- settings ------------------------------------------------------------
@@ -904,6 +907,7 @@ class ChannelRuntime:
             self.log.append("system", text="📝 in den laufenden Turn eingefügt")
             return {"steered": True}
 
+        self.auth_retry = None  # a new message replaces the one the login broke
         self.turn_task = asyncio.create_task(self._turn(prompt), name=f"turn-{self.ch.id}")
         return {"started": True}
 
@@ -939,7 +943,20 @@ class ChannelRuntime:
                 self.log.append("turn_end")
             if self._auth_failed:
                 self._auth_failed = False
+                self.auth_retry = (prompt, time.time())
                 await self.drop_client(keep_session=True)
+
+    async def retry_after_login(self, creds_mtime: float | None) -> bool:
+        """Repeat the turn an expired login broke, once the login changed."""
+        if (self.auth_retry is None or creds_mtime is None or self.lock.locked()
+                or creds_mtime <= self.auth_retry[1]):
+            return False
+        prompt, _ = self.auth_retry
+        self.auth_retry = None
+        log.info("[%s] login renewed — repeating the failed turn", self.ch.id)
+        self.log.append("system", text="🔁 Claude ist wieder angemeldet — die letzte Nachricht läuft noch einmal.")
+        self.turn_task = asyncio.create_task(self._turn(prompt), name=f"turn-{self.ch.id}")
+        return True
 
     def _check_auth(self, text: str) -> None:
         """An expired login surfaces as assistant text; tell the user where to

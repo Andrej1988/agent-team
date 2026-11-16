@@ -25,7 +25,7 @@ import signal
 import sys
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -245,7 +245,29 @@ def _limit_reason(full: str, model: str | None) -> str:
             "claude.ai/settings/usage. Retrying the same model will fail again "
             "immediately."
         )
-    return "Anthropic usage/spend limit reached mid-session — partial work preserved"
+    return "Anthropic usage/spend limit reached mid-session — partial work preserved" + _limit_reset_note(full)
+
+
+# "resets 5pm", "reset at 17:30", "try again at 3:05 PM" in a limit notice.
+_RESET_RE = re.compile(
+    r"(?:resets?|try again)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?(?![\d:])", re.I)
+RESET_NOTE = " — Reset laut Meldung: "
+
+
+def _limit_reset_note(text: str) -> str:
+    """The reset time a limit notice names, as a suffix the auto-retry reads
+    back from the stored error (and the user sees)."""
+    m = _RESET_RE.search(text or "")
+    if not m:
+        return ""
+    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower().replace(".", "")
+    if ap == "pm" and h < 12:
+        h += 12
+    elif ap == "am" and h == 12:
+        h = 0
+    if h > 23 or mi > 59:
+        return ""
+    return f"{RESET_NOTE}{h:02d}:{mi:02d}"
 
 
 def _is_limit_error(
@@ -1570,6 +1592,111 @@ async def _note_release_wait(task: dict, stage: dict, other: int) -> None:
         "text", text=f"⏳ Wartet auf den laufenden Release von #{other} — startet danach von selbst."))
 
 
+# ---- Auto-retry after a re-login or a usage-limit reset --------------------
+# A stage that failed because the Claude login had expired runs again once
+# the credentials file changed after the failure (the user logged in again,
+# or a token refresh succeeded) — once per login, since a repeat failure is
+# newer than the file. A stage parked at the usage limit runs again after
+# the reset time its notice named, else one probe per LIMIT_PROBE_MIN; a
+# probe that hits the limit again simply parks the task again.
+AUTO_RETRY = os.environ.get("WORKER_AUTO_RETRY", "1") == "1"
+AUTO_RETRY_EVERY_S = 60.0
+LIMIT_PROBE_S = float(os.environ.get("WORKER_LIMIT_PROBE_MIN", "60")) * 60
+_auto_retry_last = 0.0
+_limit_probe: dict = {"tid": None, "at": 0.0}
+
+
+def _ts(iso: str | None) -> float:
+    try:
+        return datetime.fromisoformat(iso).timestamp() if iso else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _halted_stage(stages: list[dict]) -> dict | None:
+    """The failed stage the task stopped at (no later stage got past it)."""
+    for i, s in enumerate(stages):
+        if s.get("status") == "failed" and not any(
+                t.get("status") in ("done", "skipped", "running") for t in stages[i + 1:]):
+            return s
+    return None
+
+
+def _reset_due(error: str, failed_at: float) -> float | None:
+    """Epoch of the reset time named in a stored limit error, the first such
+    clock time after the failure."""
+    i = (error or "").find(RESET_NOTE)
+    if i < 0 or failed_at <= 0:
+        return None
+    try:
+        h, m = (int(x) for x in error[i + len(RESET_NOTE):i + len(RESET_NOTE) + 5].split(":"))
+    except ValueError:
+        return None
+    base = datetime.fromtimestamp(failed_at, _TZ)
+    due = base.replace(hour=h, minute=m, second=0, microsecond=0)
+    if due.timestamp() <= failed_at:
+        due += timedelta(days=1)
+    return due.timestamp() + 120  # a little slack past the reset
+
+
+def _limit_probe_allowed(now: float, statuses: dict[int, str]) -> bool:
+    """One probe per LIMIT_PROBE_S — unless the last probe got through."""
+    tid = _limit_probe["tid"]
+    if tid is not None and statuses.get(tid) != "limit_reached":
+        return True
+    return now - _limit_probe["at"] >= LIMIT_PROBE_S
+
+
+async def _retry(task: dict, stage: dict, note: str) -> bool:
+    tid, seq = task["id"], int(stage["seq"])
+    try:
+        await asyncio.to_thread(tasks_api.retry_stage, tid, seq)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[task %s] auto-retry of stage %s refused: %s", tid, seq, e)
+        return False
+    log.info("[task %s] stage %s retried automatically (%s)", tid, seq, note)
+    await _safe_append(tid, f"stage_{seq}", _event("text", text=note))
+    return True
+
+
+async def _auto_retry(now: float) -> None:
+    global _auto_retry_last
+    if not AUTO_RETRY or now - _auto_retry_last < AUTO_RETRY_EVERY_S:
+        return
+    _auto_retry_last = now
+    wall = time.time()
+    creds = claude_login.credentials_mtime()
+    failed = await asyncio.to_thread(tasks_api.list_tasks, "failed")
+    limited = await asyncio.to_thread(tasks_api.list_tasks, "limit_reached")
+    for task in failed:
+        if creds is None or claude_login.AUTH_ERROR not in (task.get("error") or ""):
+            continue
+        stages = await asyncio.to_thread(tasks_api.list_stages, task["id"])
+        st = _halted_stage(stages)
+        if st and claude_login.AUTH_ERROR in (st.get("error") or "") and creds > _ts(st.get("finished_at")) + 1:
+            await _retry(task, st, f"🔁 Claude ist wieder angemeldet — Stufe {st['seq']} läuft noch einmal.")
+    statuses = {t["id"]: t["status"] for t in limited}
+    for task in sorted(limited, key=lambda t: (t.get("prio", 2), t.get("updated_at") or "")):
+        err = task.get("error") or ""
+        if "blocked by this account's monthly spend limit" in err:
+            continue  # only another model helps — that is the user's choice
+        stages = await asyncio.to_thread(tasks_api.list_stages, task["id"])
+        st = _halted_stage(stages)
+        if not st:
+            continue
+        failed_at = _ts(st.get("finished_at"))
+        due = _reset_due(err, failed_at)
+        if due is not None:
+            if wall < due:
+                continue
+        elif wall - failed_at < LIMIT_PROBE_S or not _limit_probe_allowed(now, statuses):
+            continue
+        if await _retry(task, st, f"🔁 Nutzungslimit sollte vorbei sein — Stufe {st['seq']} läuft noch einmal."):
+            _limit_probe.update(tid=task["id"], at=now)
+            if due is None:
+                break  # without a known reset: one probe at a time
+
+
 async def poll_loop() -> None:
     """Main loop. Spawns refines, orchestrator runs and pipeline stages
     (implement stages gated per sub-repo) as background tasks."""
@@ -1613,6 +1740,11 @@ async def poll_loop() -> None:
                 log.error("background task crashed: %r", exc)
 
         await _maybe_refresh_clis(loop.time())
+        if api_was_up:
+            try:
+                await _auto_retry(loop.time())
+            except Exception as e:  # noqa: BLE001 — never let this take the loop down
+                log.warning("auto-retry check failed: %r", e)
         monitor_control.tick()
         if api_was_up:
             try:

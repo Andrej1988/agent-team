@@ -395,13 +395,18 @@ IDLE_CLOSE_MIN = float(os.environ.get("AT_CHAT_IDLE_CLOSE_MIN", "30"))
 
 
 async def _idle_loop() -> None:
-    while IDLE_CLOSE_MIN > 0:
+    """Every minute: close idle sessions, and repeat turns an expired login
+    broke once the login was renewed."""
+    while True:
         await asyncio.sleep(60)
+        creds = claude_login.credentials_mtime()
         for rt in list(runtimes.values()):
             try:
-                await rt.close_if_idle(IDLE_CLOSE_MIN * 60)
+                if IDLE_CLOSE_MIN > 0:
+                    await rt.close_if_idle(IDLE_CLOSE_MIN * 60)
+                await rt.retry_after_login(creds)
             except Exception:  # noqa: BLE001 — one channel must not stop the rest
-                log.exception("[%s] closing an idle session failed", rt.ch.id)
+                log.exception("[%s] idle/login check failed", rt.ch.id)
 
 
 async def _probe_loop() -> None:

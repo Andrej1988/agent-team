@@ -24,6 +24,17 @@ from urllib.parse import urlsplit
 AUTH_ERROR = "Claude-Anmeldung abgelaufen oder ungültig. Bitte Claude erneut anmelden und danach den fehlgeschlagenen Lauf wiederholen."
 
 
+def credentials_mtime() -> float | None:
+    """When the shared Claude login last changed (login or token refresh) —
+    the signal to repeat runs that failed on an expired login. Only the
+    file's timestamp is read, never its content."""
+    base = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        return (base / ".credentials.json").stat().st_mtime
+    except OSError:
+        return None
+
+
 def is_auth_error(text: str) -> bool:
     text = text.lower()
     return any(phrase in text for phrase in (
