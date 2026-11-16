@@ -1659,6 +1659,18 @@ async def _retry(task: dict, stage: dict, note: str) -> bool:
     return True
 
 
+async def _retry_plan(task: dict, note: str) -> bool:
+    tid = task["id"]
+    try:
+        await asyncio.to_thread(tasks_api.retry_plan, tid)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[task %s] auto-retry of planning refused: %s", tid, e)
+        return False
+    log.info("[task %s] planning retried automatically (%s)", tid, note)
+    await _safe_append(tid, "plan", _event("text", text=note))
+    return True
+
+
 async def _auto_retry(now: float) -> None:
     global _auto_retry_last
     if not AUTO_RETRY or now - _auto_retry_last < AUTO_RETRY_EVERY_S:
@@ -1671,6 +1683,10 @@ async def _auto_retry(now: float) -> None:
     for task in failed:
         if creds is None or claude_login.AUTH_ERROR not in (task.get("error") or ""):
             continue
+        if task.get("last_busy_kind") == "plan":
+            if creds > _ts(task.get("updated_at")) + 1:
+                await _retry_plan(task, "🔁 Claude ist wieder angemeldet — die Planung läuft noch einmal.")
+            continue
         stages = await asyncio.to_thread(tasks_api.list_stages, task["id"])
         st = _halted_stage(stages)
         if st and claude_login.AUTH_ERROR in (st.get("error") or "") and creds > _ts(st.get("finished_at")) + 1:
@@ -1680,18 +1696,25 @@ async def _auto_retry(now: float) -> None:
         err = task.get("error") or ""
         if "blocked by this account's monthly spend limit" in err:
             continue  # only another model helps — that is the user's choice
-        stages = await asyncio.to_thread(tasks_api.list_stages, task["id"])
-        st = _halted_stage(stages)
-        if not st:
-            continue
-        failed_at = _ts(st.get("finished_at"))
+        planning = task.get("last_busy_kind") == "plan"
+        st = None
+        if planning:
+            failed_at = _ts(task.get("updated_at"))
+        else:
+            st = _halted_stage(await asyncio.to_thread(tasks_api.list_stages, task["id"]))
+            if not st:
+                continue
+            failed_at = _ts(st.get("finished_at"))
         due = _reset_due(err, failed_at)
         if due is not None:
             if wall < due:
                 continue
         elif wall - failed_at < LIMIT_PROBE_S or not _limit_probe_allowed(now, statuses):
             continue
-        if await _retry(task, st, f"🔁 Nutzungslimit sollte vorbei sein — Stufe {st['seq']} läuft noch einmal."):
+        note = "🔁 Nutzungslimit sollte vorbei sein — {} läuft noch einmal."
+        ok = (await _retry_plan(task, note.format("die Planung")) if planning
+              else await _retry(task, st, note.format(f"Stufe {st['seq']}")))
+        if ok:
             _limit_probe.update(tid=task["id"], at=now)
             if due is None:
                 break  # without a known reset: one probe at a time

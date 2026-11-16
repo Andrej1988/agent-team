@@ -203,3 +203,8 @@ def set_stage_session(
 def retry_stage(task_id: int, seq: int) -> dict:
     """Run a failed stage again (same as the user's „erneut versuchen“)."""
     return _request("POST", f"/api/tasks/{task_id}/stages/{seq}/retry")
+
+
+def retry_plan(task_id: int) -> dict:
+    """Plan again after a login/limit stop (refused for anything else)."""
+    return _request("POST", f"/api/tasks/{task_id}/plan/retry")

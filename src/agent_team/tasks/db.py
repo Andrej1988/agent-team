@@ -1197,6 +1197,20 @@ def request_plan(task_id: int) -> Optional[dict]:
     return get_task(task_id)
 
 
+def retry_failed_plan(task_id: int) -> Optional[dict]:
+    """Plan again after an orchestrator run that an expired login or the
+    usage limit stopped — the worker's auto-retry. Not a start: only a task
+    the user already started, and only for those two causes."""
+    from ..chat.claude_login import AUTH_ERROR
+    with _connect() as cx:
+        task = _task_row(cx, task_id)
+    if (not task or task["mode"] != "pipeline" or task.get("last_busy_kind") != "plan"
+            or not (task["status"] == "limit_reached"
+                    or (task["status"] == "failed" and AUTH_ERROR in (task.get("error") or "")))):
+        return None
+    return request_plan(task_id)
+
+
 def update_plan(
     task_id: int,
     stages: list[dict],

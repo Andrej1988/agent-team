@@ -46,6 +46,10 @@ class FakeApi:
         self.retried.append((tid, seq))
         return {}
 
+    def retry_plan(self, tid):
+        self.retried.append((tid, "plan"))
+        return {}
+
 
 def _run(monkeypatch, api, creds):
     monkeypatch.setattr(worker, "tasks_api", api)
@@ -88,3 +92,11 @@ def test_usage_limit_waits_for_the_named_reset_or_probes_one_task(monkeypatch):
     stages = {5: st(now - 60), 6: st(old), 7: st(old), 8: st(old)}
     # 5 waits for its reset, 8 needs another model, of 6/7 only one probe
     assert _run(monkeypatch, FakeApi([], limited, stages), None) == [(6, 3)]
+
+
+def test_planning_stopped_by_the_login_plans_again(monkeypatch):
+    t = time.time() - 600
+    failed = [{"id": 9, "status": "failed", "error": claude_login.AUTH_ERROR,
+               "last_busy_kind": "plan", "updated_at": _iso(t)}]
+    assert _run(monkeypatch, FakeApi(failed, [], {}), t + 60) == [(9, "plan")]
+    assert _run(monkeypatch, FakeApi(failed, [], {}), t - 60) == []

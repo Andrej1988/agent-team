@@ -324,6 +324,20 @@ def test_complete_plan_failures(db):
     assert db.complete_plan(t["id"], plan_text([{"role": "reviewer"}])) is None
 
 
+def test_auto_retry_may_replan_only_after_a_login_or_limit_stop(db):
+    from agent_team.chat.claude_login import AUTH_ERROR
+    t = db.create_task("t", "d", 2, [])
+    assert db.retry_failed_plan(t["id"]) is None           # never started: the user's click
+    db.request_plan(t["id"])
+    db.plan_fail(t["id"], "orchestrator crashed")
+    assert db.retry_failed_plan(t["id"]) is None           # other causes stay with the user
+    db.request_plan(t["id"])
+    db.plan_fail(t["id"], AUTH_ERROR)
+    assert db.retry_failed_plan(t["id"])["status"] == "planning"
+    db.mark_limit_reached(t["id"], "limit", "plan")
+    assert db.retry_failed_plan(t["id"])["status"] == "planning"
+
+
 def test_complete_plan_reconciles_repos_like_refine(db):
     """The orchestrator declares the repos its stages touch; known names win
     (short forms tolerated, junk dropped), a valid new_repo proposal is the

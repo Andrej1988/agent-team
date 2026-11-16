@@ -1219,6 +1219,15 @@ def request_plan(task_id: int, request: Request):
     return t
 
 
+@router.post("/{task_id}/plan/retry")
+def retry_plan(task_id: int):
+    """Worker auto-retry of a planning run stopped by an expired login or the
+    usage limit (tasks_db.retry_failed_plan) — refuses everything else."""
+    t = _transition(task_id, tasks_db.retry_failed_plan, what="retry plan")
+    _truncate_stream(task_id, "plan")
+    return t
+
+
 @router.put("/{task_id}/plan")
 def update_plan(task_id: int, body: PlanUpdateBody):
     """User edit: replace the pending stages (order, roles, goals, per-stage
