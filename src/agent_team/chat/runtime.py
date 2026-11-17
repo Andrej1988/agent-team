@@ -113,6 +113,8 @@ CAPABILITIES_BLURB = (
     "Build and deploy ONLY from the live checkout after the merge, never from "
     "a worktree or side branch (`docker compose build/up` there is refused): "
     "an image from an old branch silently reverts fixes that landed since. "
+    "Exception: a side image under its own tag (`docker build -t img:experiment-x`, "
+    "never `latest` or a tag a service runs) for an experiment is fine. "
     "Remove a worktree you made once its branch is merged or dropped.\n"
     "\n"
     "If a real task can't be done with file edits + docker delegation — "

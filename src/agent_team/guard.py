@@ -143,6 +143,21 @@ _COMPOSE_BUILD_UP = re.compile(
 _COMPOSE_OWN_PROJECT = re.compile(r"\s(?:-p|--project-name)[\s=]+\S+")
 _DOCKER_BUILD = re.compile(r"\bdocker\s+(?:buildx\s+)?build\b")
 _WORKTREE = re.compile(r"(?:^|/)\.(?:task-)?worktrees(?:/|$)")
+_BUILD_TAG = re.compile(r"(?:^|\s)(?:-t|--tag)(?:[\s=]+|(?=[^\s-]))(\S+)")
+
+
+def _own_tags_only(part: str) -> bool:
+    """`docker build` that names only explicit, non-latest tags
+    (`-t img:experiment-1`): a side image next to the live one, it replaces
+    nothing. No tag, or `:latest`, could be what a live service runs."""
+    tags = [t.strip("'\"") for t in _BUILD_TAG.findall(part)]
+    if not tags:
+        return False
+    for t in tags:
+        name = t.rsplit("/", 1)[-1]
+        if ":" not in name or name.split(":", 1)[1] in ("", "latest"):
+            return False
+    return True
 
 
 def worktree_violation(tool: str, tool_input: dict, cwd: Optional[str] = None) -> Optional[str]:
@@ -152,7 +167,7 @@ def worktree_violation(tool: str, tool_input: dict, cwd: Optional[str] = None) -
     cmd = str((tool_input or {}).get("command") or "")
     for part in re.split(r"&&|\|\||;|\n", cmd):
         builds = (_COMPOSE_BUILD_UP.search(" " + part) and not _COMPOSE_OWN_PROJECT.search(part)) \
-            or _DOCKER_BUILD.search(part)
+            or (_DOCKER_BUILD.search(part) and not _own_tags_only(part))
         if not builds:
             continue
         where = [t for t in re.split(r"[\s=]+", cmd) if _WORKTREE.search(t)]
@@ -160,7 +175,8 @@ def worktree_violation(tool: str, tool_input: dict, cwd: Optional[str] = None) -
             return (f"Bauen/Starten aus einem Arbeitsbaum ({(where or [cwd])[0]}). Ein Image aus einem "
                     "Nebenzweig macht Fixes rückgängig, die seitdem auf dem Hauptzweig gelandet sind. "
                     "Erst mergen (vorher den Hauptzweig in den Zweig holen, Tests), dann aus dem "
-                    "Live-Ordner bauen. Wegwerf-Stacks mit eigenem `-p <name>` sind erlaubt")
+                    "Live-Ordner bauen. Erlaubt sind Wegwerf-Stacks mit eigenem `-p <name>` und "
+                    "`docker build -t <image>:<eigenes-tag>` (nicht latest) — ein Neben-Image, das nichts ersetzt")
     return None
 
 

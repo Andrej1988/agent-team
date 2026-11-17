@@ -82,6 +82,10 @@ def test_off_without_config(monkeypatch):
     ("docker compose up -d --build svc", "/home/u/git/.task-worktrees/shop/206/shop-api"),
     ("docker build -t shop-api:latest .", "/repo/.worktrees/x"),
     ("git status; docker-compose up -d", "/repo/.worktrees/x"),
+    ("docker build .", "/repo/.worktrees/x"),                                  # untagged = latest
+    ("docker build -t shop-api .", "/repo/.worktrees/x"),                      # implicit latest
+    ("docker build -t shop-api:exp1 -t shop-api:latest .", "/repo/.worktrees/x"),
+    ("docker build -t reg:5000/shop-api .", "/repo/.worktrees/x"),
 ])
 def test_no_build_or_deploy_from_a_worktree(cmd, cwd):
     assert guard.worktree_violation("Bash", {"command": cmd}, cwd)
@@ -93,6 +97,8 @@ def test_no_build_or_deploy_from_a_worktree(cmd, cwd):
     ("docker run --rm -v $PWD:/app img pytest", "/x/.task-worktrees/e/62"),  # tests
     ("docker compose logs --tail 20 svc", "/repo/.worktrees/x"),
     ("git -C .worktrees/x log --oneline -3", "/repo"),
+    ("docker build -t shop-api:experiment-1 .", "/repo/.worktrees/x"),         # side image
+    ("docker buildx build --tag=reg:5000/shop-api:exp2 -f D .", "/repo/.worktrees/x"),
 ])
 def test_worktree_check_lets_normal_work_through(cmd, cwd):
     assert guard.worktree_violation("Bash", {"command": cmd}, cwd) is None
