@@ -110,7 +110,8 @@ export const api = {
     stop: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/stop`, 'POST'),
     resume: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/resume`, 'POST'),
     restore: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/restore`, 'POST'),
-    start: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/plan`, 'POST'),
+    start: (project: string, id: number, note?: string) =>
+      send<Task>(`/p/${project}/api/tasks/${id}/plan`, 'POST', note ? { note } : undefined),
     park: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/backlog`, 'POST'),
     close: (project: string, id: number) => send<Task>(`/p/${project}/api/tasks/${id}/close`, 'POST'),
     create: (project: string, body: TaskCreateBody) => send<Task>(`/p/${project}/api/tasks`, 'POST', body),

@@ -5,7 +5,7 @@ import {
   Settings2, ShieldAlert, Square, Trash2, TriangleAlert, Wrench, X,
 } from 'lucide-react'
 import TaskStatusBar from '../components/tasks/TaskStatusBar'
-import { CARD_TASK, cardOutdated, mentionedActions, taskMovedOn } from '../components/tasks/cards'
+import { CARD_TASK, cardOutdated, mentionedActions, replanHint, taskMovedOn } from '../components/tasks/cards'
 import { api, type CatalogModel, type ChatChannel, type ChatEvent, type ChatQuestion, type ServiceButton, type ServiceChannel, type Task, type TaskActions } from '../api/client'
 
 // ---- helpers -----------------------------------------------------------------
@@ -806,8 +806,10 @@ export default function Chat() {
       }
       const rp = /^replan:(\d+)$/.exec(b.data)
       if (!service && rp && info?.project) {
-        await api.lead.start(info.project, Number(rp[1]))   // POST /plan re-plans a blocked task
-        done = 'Planer läuft'
+        // POST /plan re-plans a blocked task; a hint from the lead goes into the task first.
+        const note = (b as ServiceButton & { note?: string }).note
+        await api.lead.start(info.project, Number(rp[1]), note)
+        done = note ? 'Planer läuft (mit Hinweis)' : 'Planer läuft'
       }
       const m = /^(start|park|close|discuss|next|done):(\d+)$/.exec(b.data)
       if (!service && m?.[1] === 'discuss') {
@@ -852,7 +854,10 @@ export default function Chat() {
     if (busy || !taskState) return null
     const last = [...events].reverse().find((e) => e.type === 'assistant' && !e.author)
     if (!last?.text || events.some((e) => e.seq > last.seq && e.type === 'user')) return null
-    const actions = mentionedActions(last.text, taskState.actions)
+    // A re-plan the lead recommends with a hint takes that hint along.
+    const hint = replanHint(last.text)
+    const actions = mentionedActions(last.text, taskState.actions).map((a) => (hint && /^replan:/.test(a.data)
+      ? { ...a, label: 'Neu planen mit diesem Hinweis', note: hint } : a))
     return actions.length ? { seq: last.seq, actions } : null
   }, [events, taskState, busy])
   const alertCount = useMemo(() => events.filter((e) => e.type === 'alert').length, [events])

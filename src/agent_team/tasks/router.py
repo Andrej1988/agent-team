@@ -1121,6 +1121,10 @@ class StageSpec(BaseModel):
     model: Optional[str] = Field(None, max_length=100)
 
 
+class PlanNoteBody(BaseModel):
+    note: str = Field("", max_length=4000)
+
+
 class PlanUpdateBody(BaseModel):
     stages: list[StageSpec] = Field(default_factory=list)
     exit_criteria: Optional[list[str]] = None
@@ -1191,7 +1195,7 @@ def list_stages(task_id: int):
 
 
 @router.post("/{task_id}/plan")
-def request_plan(task_id: int, request: Request):
+def request_plan(task_id: int, request: Request, body: Optional[PlanNoteBody] = None):
     """Switch the task to pipeline mode and queue an orchestrator run. From
     plan_ready/blocked this re-plans the pending tail.
 
@@ -1208,6 +1212,9 @@ def request_plan(task_id: int, request: Request):
     if cur.get("status") in ("planning", "running", "awaiting_input", "refining"):
         raise HTTPException(409, f"Task #{task_id} läuft bereits (Status {cur['status']}).")
     first_start = cur.get("mode") != "pipeline"
+    if body is not None and body.note.strip() and cur.get("status") in tasks_db.PLAN_ELIGIBLE_STATUS:
+        # "Neu planen mit diesem Hinweis": the planner reads the task, not the chat.
+        tasks_db.add_plan_note(task_id, body.note)
     t = _transition(task_id, tasks_db.request_plan, what="plan")
     _truncate_stream(task_id, "plan")
     # The task's own chat starts with the approval (Tasks v2).

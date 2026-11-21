@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cardOutdated, mentionedActions, taskMovedOn } from './cards.ts'
+import { cardOutdated, mentionedActions, replanHint, taskMovedOn } from './cards.ts'
 
 const stopped = { id: 158, status: 'blocked', mode: 'pipeline' }
 const b = (...data) => data.map((d) => ({ data: d }))
@@ -50,5 +50,15 @@ test('a button named while saying "not yet" or "it would fail" is not offered', 
     + 'Bis dahin biete ich sie bewusst noch nicht an.'
   assert.deepEqual(mentionedActions(said, actions), [])
   assert.deepEqual(mentionedActions('Empfehlung: Ergebnis übernehmen, dann ist alles im Live-Ordner.', actions).map((a) => a.data), ['apply:147'])
+})
+
+test('the re-plan hint in a lead answer is found', () => {
+  const said = '**Warum gestoppt:** Konflikt.\n\n**Empfehlung:** „Neu planen mit Hinweis“. Inhalt des Hinweises:\n'
+    + '- main in task/240 mergen\n- IMP-5/IMP-7 herausnehmen\n\n„Ergebnis übernehmen“ jetzt nicht drücken.'
+  assert.equal(replanHint(said), '- main in task/240 mergen\n- IMP-5/IMP-7 herausnehmen')
+  assert.equal(replanHint('**Empfehlung:** Neu planen, diesmal ohne Backtest.'), 'Neu planen, diesmal ohne Backtest.')
+  assert.equal(replanHint('Alles fertig.'), '')
+  // "jetzt nicht drücken" keeps the apply button away
+  assert.deepEqual(mentionedActions(said, [{ data: 'apply:240' }, { data: 'replan:240' }]).map((a) => a.data), ['replan:240'])
 })
 

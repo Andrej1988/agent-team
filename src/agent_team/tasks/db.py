@@ -891,6 +891,21 @@ def get_stage(task_id: int, seq: int) -> Optional[dict]:
         return _stage_row(cx, task_id, seq)
 
 
+def add_plan_note(task_id: int, note: str) -> None:
+    """Append a re-plan hint to the details, in any status: the orchestrator
+    plans from the task (details + stage history), it never sees the chat."""
+    note = (note or "").strip()
+    if not note:
+        return
+    now = _now()
+    with _tx() as cx:
+        task = _task_row(cx, task_id)
+        if not task:
+            return
+        block = f"\n\n## Hinweis zum Neu-Planen ({now[:16].replace('T', ' ')})\n{note[:4000]}"
+        _set_task(cx, task_id, now, details=(task.get("details") or "").rstrip() + block)
+
+
 def _set_task(cx: sqlite3.Connection, task_id: int, now: str, **fields: Any) -> None:
     sets = ", ".join(f"{k}=?" for k in fields) + ", updated_at=?"
     cx.execute(f"UPDATE tasks SET {sets} WHERE id=?", (*fields.values(), now, task_id))

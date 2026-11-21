@@ -53,6 +53,15 @@ const MENTIONS: [RegExp, RegExp][] = [
 // „Dann schicke ich dir die Karte …“ (User 2026-11-21).
 const NOT_AN_OFFER = /\b(nicht|nichts|kein\w*|nie|fehl\w*|bis dahin|sobald|erst (wenn|nach|danach)|schicke dir|biete\w*)\b/i
 
+// The re-plan hint in a lead answer ("Inhalt des Hinweises: …", else the
+// "Empfehlung" paragraph). The planner reads the task, not the chat, so the
+// re-plan button under that answer carries it along (User 2026-11-21).
+export function replanHint(text: string): string {
+  const block = /inhalt des hinweises:?\**:?\s*\n?([\s\S]*?)(?:\n\s*\n|$)/i.exec(text)
+    ?? /\*\*empfehlung:?\*\*:?([\s\S]*?)(?:\n\s*\n|$)/i.exec(text)
+  return (block?.[1] ?? '').replace(/\*\*/g, '').trim()
+}
+
 export function mentionedActions<T extends CardButton>(text: string, actions: T[]): T[] {
   const clauses = text.split(/[.!?\n;,]+/).filter((c) => !NOT_AN_OFFER.test(c))
   return actions.filter((a) => MENTIONS.some(([kind, words]) => kind.test(a.data) && clauses.some((c) => words.test(c))))

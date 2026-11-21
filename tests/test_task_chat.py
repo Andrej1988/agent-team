@@ -318,3 +318,19 @@ def test_stage_question_offers_an_own_answer(lead_project):
     plain = [{"seq": 2, "role": "data-engineer", "status": "awaiting_input", "options": []}]
     acts = mirror.available_actions(_task("awaiting_input"), plain)
     assert acts[0]["data"] == "own:5:2" and acts[0]["kind"] == "primary"
+
+
+def test_replan_with_note_puts_the_hint_into_the_task(lead_project, monkeypatch):
+    monkeypatch.setenv("AT_ACCESS_TEAM", "example.cloudflareaccess.com")
+    monkeypatch.setenv("AT_ACCESS_AUD", "aud")
+    import agent_team.app as mod
+    mod = importlib.reload(mod)
+    monkeypatch.setattr(mod, "_internal_client", lambda r: False)
+    monkeypatch.setattr(mod, "access_identity", lambda r: "me@example.com")
+    c = TestClient(mod.app)
+    t = db.create_task("x", "Ausgangslage.", 2, ["demo-lstm"])
+    r = c.post(f"/p/demo/api/tasks/{t['id']}/plan", json={"note": "- main mergen\n- IMP-5 herausnehmen"})
+    assert r.status_code == 200
+    details = db.get_task(t["id"])["details"]
+    assert details.startswith("Ausgangslage.") and "Hinweis zum Neu-Planen" in details and "IMP-5 herausnehmen" in details
+    assert c.post(f"/p/demo/api/tasks/{db.create_task('y', 'd', 2, [])['id']}/plan").status_code == 200  # no body
