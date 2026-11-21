@@ -41,3 +41,14 @@ test('an answer that tells me to tap something brings the button along', () => {
   // only what is possible now
   assert.deepEqual(mentionedActions(said, b('stop:57')), [])
 })
+
+test('a button named while saying "not yet" or "it would fail" is not offered', () => {
+  const actions = b('apply:147', 'replan:147', 'done:147')
+  const said = 'Das Übernehmen hat nur halb geklappt. Dort gibt es nichts zu übernehmen. '
+    + 'Ohne das schlägt ein neues „Übernehmen“ wahrscheinlich gleich wieder fehl, weil Git den Branch noch für belegt hält. '
+    + 'Soll ich das machen? Dann räume ich auf und schicke dir direkt die Karte „Ergebnis übernehmen“. '
+    + 'Bis dahin biete ich sie bewusst noch nicht an.'
+  assert.deepEqual(mentionedActions(said, actions), [])
+  assert.deepEqual(mentionedActions('Empfehlung: Ergebnis übernehmen, dann ist alles im Live-Ordner.', actions).map((a) => a.data), ['apply:147'])
+})
+

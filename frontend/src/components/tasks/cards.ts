@@ -37,7 +37,7 @@ const MENTIONS: [RegExp, RegExp][] = [
   [/^close:/, /schließen – wird nicht|(task|#\d+)[^.\n]{0,40}schlie(ß|ss)en/i],
   [/^retry:/, /erneut versuchen|nochmal versuchen/i],
   [/^replan:/, /neu planen/i],
-  [/^apply:/, /übernehmen/i],
+  [/^apply:/, /ergebnis übernehmen|in \S+ übernehmen|„übernehmen“|auf übernehmen/i],
   [/^next:/, /freigeben|nächste stufe/i],
   [/^resume:/, /weitermachen/i],
   [/^skip:/, /überspringen/i],
@@ -48,6 +48,12 @@ const MENTIONS: [RegExp, RegExp][] = [
   [/^restore:/, /wieder öffnen/i],
 ]
 
+// A clause that names a button but says not now / it would fail / I'll send
+// it later is no offer: „… biete ich noch nicht an“, „… schlägt fehl“,
+// „Dann schicke ich dir die Karte …“ (User 2026-11-21).
+const NOT_AN_OFFER = /\b(nicht|nichts|kein\w*|nie|fehl\w*|bis dahin|sobald|erst (wenn|nach|danach)|schicke dir|biete\w*)\b/i
+
 export function mentionedActions<T extends CardButton>(text: string, actions: T[]): T[] {
-  return actions.filter((a) => MENTIONS.some(([kind, words]) => kind.test(a.data) && words.test(text)))
+  const clauses = text.split(/[.!?\n;,]+/).filter((c) => !NOT_AN_OFFER.test(c))
+  return actions.filter((a) => MENTIONS.some(([kind, words]) => kind.test(a.data) && clauses.some((c) => words.test(c))))
 }
