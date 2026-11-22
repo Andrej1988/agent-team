@@ -95,9 +95,9 @@ export function BudgetSettings() {
         </div>
       </div>
       <div className="mt-4 space-y-3">
-        {num('early_lead_pct', 'Vorsprung am Wochenanfang', 0, 50, ' %')}
+        {num('early_lead_pct', 'Vorsprung am Wochenanfang', 0, 100, ' %')}
         {num('reserve_pct', 'Reserve für dich', 0, 50, ' %')}
-        {num('release_hours', 'Reserve frei vor dem Reset', 0, 48, ' h')}
+        {num('release_hours', 'Reserve frei vor dem Reset', 0, 168, ' h')}
         {num('five_hour_max', 'Bremsen ab 5-h-Auslastung', 30, 100, ' %')}
         {num('user_active_minutes', 'Pause nach eigener Chat-Nachricht', 0, 60, ' min')}
       </div>
