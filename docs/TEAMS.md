@@ -104,7 +104,8 @@ metric_gates:                   # ein pass zählt nur, wenn die Zahlen passen
     sample_size: ">= 500"
     p_value: "<= 0.05"
 metric_files: []                # Rollen, deren Zahlen zusätzlich aus Dateien berechnet werden
-                                # (heute nur Backtest-Equity, worker/evidence.py)
+                                # (Backtest-Equity, optional Benchmark -> Alpha/Beta,
+                                # worker/evidence.py); ohne metric_gates nur angezeigt
 variant_penalty: {}             # Mehrfachtests: Schwellen steigen pro weiterer Variante
 
 scouts:

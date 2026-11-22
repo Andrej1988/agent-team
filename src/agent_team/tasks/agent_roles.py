@@ -180,8 +180,10 @@ def load_catalog(team_dir: Path) -> Catalog:
             raise ValueError(f"team.yaml: metric_gates for unknown role {role_id!r}")
         metric_gates[str(role_id)] = {str(m): _parse_threshold(str(cond)) for m, cond in (spec or {}).items()}
     metric_files = frozenset(str(r) for r in team.get("metric_files") or [])
-    if not metric_files <= set(metric_gates):
-        raise ValueError(f"team.yaml: metric_files without metric_gates {sorted(metric_files - set(metric_gates))}")
+    # metric_files without metric_gates: the numbers are computed and shown,
+    # the agent's verdict stands (no hard thresholds).
+    if not metric_files <= ids:
+        raise ValueError(f"team.yaml: metric_files for unknown roles {sorted(metric_files - ids)}")
     penalty: dict[str, VariantRule] = {}
     for role_id, spec in (team.get("variant_penalty") or {}).items():
         spec = spec or {}

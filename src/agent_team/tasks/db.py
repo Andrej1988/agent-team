@@ -1638,12 +1638,21 @@ def complete_stage(task_id: int, seq: int, attempt: int, output: str,
             gate = agent_roles.raised_gate(gate, rule, variants)
         agent_metrics = dict(res.metrics)
         file_metrics: dict = {}
+        if role_id in agent_roles.METRIC_FILES:
+            ev = evidence or {}
+            file_metrics = {k: float(v) for k, v in (ev.get("metrics") or {}).items()
+                            if isinstance(v, (int, float))}
+            if not gate or res.verdict != "pass":
+                # Report only (no gate, or nothing for the gate to check):
+                # computed numbers win for display, the verdict stands.
+                res.metrics = {**agent_metrics, **file_metrics}
+                if not file_metrics and res.verdict in ("pass", "fail"):
+                    res.summary = (res.summary + " — Rohdaten nicht nachgerechnet: "
+                                   + str(ev.get("error") or "keine Backtest-Dateien gemeldet")).strip(" —")
         if gate and res.verdict == "pass":
             failed: list[str] = []
             if role_id in agent_roles.METRIC_FILES:
                 ev = evidence or {}
-                file_metrics = {k: float(v) for k, v in (ev.get("metrics") or {}).items()
-                                if isinstance(v, (int, float))}
                 if not file_metrics:
                     failed.append("Rohdaten: " + str(ev.get("error") or "keine Backtest-Dateien gemeldet")
                                   + " (docs/tasks/task-<id>/oos_equity.csv + oos_trades.csv)")

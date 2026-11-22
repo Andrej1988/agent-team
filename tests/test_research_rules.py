@@ -155,3 +155,23 @@ def test_second_variant_needs_a_higher_bar_and_the_last_one_stops(files_gate):
     done = {s["seq"]: s for s in db.list_stages(t["id"])}[st["seq"]]
     assert done["verdict"] == "fail" and "Variante 2" in done["findings"][-1]["text"]
     assert t3["status"] == "blocked" and "2 Varianten" in t3["stop_reason"]
+
+
+def test_metric_files_without_gate_only_report(tmp_path, monkeypatch):
+    """No metric_gates: computed numbers are shown, the auditor's verdict stands."""
+    from agent_team.tasks import db
+    from test_pipeline_backend import make_pipeline
+    import dataclasses
+    real = agent_roles.current()
+    cat = dataclasses.replace(real, METRIC_GATES={}, METRIC_FILES=frozenset({"backtest-auditor"}),
+                              VARIANT_PENALTY={})
+    monkeypatch.setattr(agent_roles, "current", lambda: cat)
+    monkeypatch.setattr(db, "DEFAULT_AUTOPILOT", "off")
+    t, _ = make_pipeline(db, ["backtest-engineer", "backtest-auditor"])
+    st = _run_until_auditor(db, t["id"])
+    db.complete_stage(t["id"], st["seq"], st["attempt"], _auditor_pass(0.4),
+                      {"metrics": {"oos_sharpe": 0.3, "benchmark_sharpe": 0.2, "alpha_pct": 1.5, "beta": 0.4},
+                       "file": "docs/tasks/task-1"})
+    done = {s["seq"]: s for s in db.list_stages(t["id"])}[st["seq"]]
+    assert done["verdict"] == "pass"
+    assert "oos_sharpe=0.3" in done["summary"] and "beta=0.4" in done["summary"]
