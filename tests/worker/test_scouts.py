@@ -381,3 +381,20 @@ def test_weekly_report_lists_old_side_worktrees(tmp_path):
     text = report.worktree_lines(stale)
     assert "exp/old" in text and "1 eigene Commits nicht gemergt" in text and "svc-old" in text
     assert report.worktree_lines([]) == "(keine)"
+
+
+def test_prompt_shows_closed_tasks_and_every_scouts_proposals(tmp_path):
+    import json
+    d = tmp_path / "scouts"
+    d.mkdir()
+    (d / "qa.json").write_text(json.dumps({"last_run": 1, "proposed": ["Milch-Klasse prüfen"]}))
+    (d / "data.json").write_text(json.dumps({"last_run": 2, "proposed": ["Mengen-Parser heilen"]}))
+    (d / "qa.mcp.json").write_text("{}")
+    assert scouts.all_proposed(tmp_path) == ["Milch-Klasse prüfen", "Mengen-Parser heilen"]
+    from datetime import datetime, timedelta
+    now = datetime.now().astimezone()
+    closed = scouts.recent_closed([
+        {"id": 4, "status": "backlog", "title": "Geparkt", "updated_at": now.isoformat()},
+        {"id": 5, "status": "done", "title": "Uralt", "updated_at": (now - timedelta(days=200)).isoformat()}])
+    p = scouts.build_prompt({}, "the app", [], scouts.all_proposed(tmp_path), "A", "P", closed=closed)
+    assert "#4 [backlog] Geparkt" in p and "Uralt" not in p and "Mengen-Parser heilen" in p

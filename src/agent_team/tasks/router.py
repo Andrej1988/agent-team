@@ -31,7 +31,7 @@ from .. import decisions, projects
 from ..log_redaction import redact
 from . import agent_roles
 from . import db as tasks_db
-from . import mirror
+from . import mirror, similar
 
 router = APIRouter()
 
@@ -68,6 +68,9 @@ class TaskCreate(BaseModel):
     execute_model: Optional[str] = None
     # Pipeline mode: model for the orchestrator's plan / re-plan runs.
     plan_model: Optional[str] = None
+    # Agents (internal callers) get a 409 when the title restates a task of
+    # the last SIMILAR_DAYS days; true = "I checked, it is different".
+    allow_similar: bool = False
 
 
 class TaskUpdate(BaseModel):
@@ -448,8 +451,21 @@ def task_board(done_days: int = 7):
             "lead_channel": lead.id if lead else None}
 
 
+SIMILAR_DAYS = 90
+
+
 @router.post("", status_code=201)
-def create_task(body: TaskCreate):
+def create_task(body: TaskCreate, request: Request):
+    if getattr(request.state, "user", None) == "internal" and not body.allow_similar:
+        hits = similar.find(body.title, tasks_db.recent_tasks(SIMILAR_DAYS))
+        if hits:
+            h = hits[0]
+            raise HTTPException(409, {
+                "message": f"Sehr ähnlich zu #{h['id']} [{h['status']}] {h['title']} — erst diesen Task "
+                           "ansehen (ergänzen statt neu anlegen). Ist es wirklich etwas anderes: "
+                           "erneut senden mit \"allow_similar\": true.",
+                "similar": hits[:3],
+            })
     return tasks_db.create_task(
         title=body.title.strip(),
         details=body.details,

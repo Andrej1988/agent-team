@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional
@@ -117,11 +118,46 @@ def ledger_text(finished: list[dict], limit: int = 60) -> str:
     return "\n".join(out) or "(none yet)"
 
 
+RECENT_DAYS = 60
+
+
+def recent_closed(tasks: list[dict], days: int = RECENT_DAYS, limit: int = 150) -> list[dict]:
+    """Parked, done and closed tasks touched in the last ``days`` days, newest first."""
+    cutoff = time.time() - days * 86400
+    out = []
+    for t in tasks:
+        try:
+            ts = datetime.fromisoformat(t.get("updated_at") or "").timestamp()
+        except ValueError:
+            continue
+        if ts >= cutoff:
+            out.append(t)
+    return sorted(out, key=lambda t: t.get("updated_at") or "", reverse=True)[:limit]
+
+
+def all_proposed(control: Path, limit: int = 150) -> list[str]:
+    """Earlier proposal titles of every scout of this project (not only the
+    running one): one scout must not re-file what another already did."""
+    seen: dict[str, float] = {}
+    for f in (control / "scouts").glob("*.json"):
+        if f.name.endswith(".mcp.json"):
+            continue
+        try:
+            st = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for i, title in enumerate(st.get("proposed") or []):
+            seen.setdefault(str(title), float(st.get("last_run") or 0) + i * 1e-3)
+    return [t for t, _ in sorted(seen.items(), key=lambda x: x[1])][-limit:]
+
+
 def build_prompt(scout: dict, label: str, open_tasks: list[dict], proposed: list[str],
-                 assignment: str, persona: str, ledger: Optional[str] = None, decided: str = "") -> str:
+                 assignment: str, persona: str, ledger: Optional[str] = None, decided: str = "",
+                 closed: Optional[list[dict]] = None) -> str:
     limit = int(scout.get("max_proposals") or 3)
     tasks = "\n".join(f"- #{t['id']} [{t['status']}] {t['title']}" for t in open_tasks[:150]) or "(none)"
-    earlier = "\n".join(f"- {t}" for t in proposed[-100:]) or "(none)"
+    earlier = "\n".join(f"- {t}" for t in proposed[-150:]) or "(none)"
+    closed_part = "\n".join(f"- #{t['id']} [{t['status']}] {t['title']}" for t in closed or []) or "(none)"
     ledger_part = f"""
 ## Ledger — earlier results (learn from them; never re-test a rejected idea
 ## unless you name what is materially different this time)
@@ -139,7 +175,11 @@ propose new work.
 ## Open tasks (do not duplicate)
 {tasks}
 
-## Proposed before (never repeat, not even reworded)
+## Parked, done or closed in the last {RECENT_DAYS} days (do not re-propose; a
+## new finding about one of them: say so in the proposal and name its #id)
+{closed_part}
+
+## Proposed before by any scout of this project (never repeat, not even reworded)
 {earlier}
 {ledger_part}{decided}
 ## Output contract
@@ -273,13 +313,17 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
     if common.exists():
         assignment = common.read_text(encoding="utf-8").strip() + "\n\n" + assignment
     open_tasks = await asyncio.to_thread(tasks_api.list_tasks)
+    closed = []
+    for st in ("backlog", "done", "closed"):
+        closed += await asyncio.to_thread(tasks_api.list_tasks, st)
+    closed = recent_closed(closed)
     ledger = None
     if scout.get("ledger"):
         finished = (await asyncio.to_thread(tasks_api.list_tasks, "done")) + \
                    (await asyncio.to_thread(tasks_api.list_tasks, "blocked"))
         ledger = ledger_text(finished)
-    prompt = build_prompt(scout, label, open_tasks, list(state.get("proposed") or []), assignment, persona, ledger,
-                          decisions.prompt_section(control))
+    prompt = build_prompt(scout, label, open_tasks, all_proposed(control), assignment, persona, ledger,
+                          decisions.prompt_section(control), closed=closed)
     if scout.get("prepare"):
         prepared = await run_prepare(scout, state, team_dir, control, cwd)
         prompt += (f"\n\n## Prepared input\nRead `{prepared}` first — built for this run "
@@ -312,12 +356,21 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
         return
     created = []
     infos = [p for p in proposals if is_info(p)]
+    repeats = []  # (proposal, similar task) — the API refused a near-duplicate
     for p in proposals:
         if is_info(p):
             continue
-        t = await asyncio.to_thread(
-            tasks_api.create_task, p["title"],
-            f"{p['details']}\n\n(Vorschlag des Scouts {sid})", p["prio"], p["repos"])
+        try:
+            t = await asyncio.to_thread(
+                tasks_api.create_task, p["title"],
+                f"{p['details']}\n\n(Vorschlag des Scouts {sid})", p["prio"], p["repos"])
+        except tasks_api.TasksApiError as e:
+            sim = (e.detail.get("similar") or [None])[0] if isinstance(e.detail, dict) else None
+            if e.status != 409 or not sim:
+                raise
+            log.info("[scout %s] %r restates task #%s — reported, not filed", sid, p["title"], sim["id"])
+            repeats.append((p, sim))
+            continue
         created.append((t["id"], p))
     if scout.get("browser") and browser_uses == 0:
         log.warning("[scout %s] browser scout did not use the browser", sid)
@@ -343,7 +396,15 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
                                     text, f"scout:{sid}")
         except Exception as e:
             log.warning("[scout %s] channel notify failed: %s", sid, e)
-    if not created and not infos and channel:
+    if repeats and channel:
+        text = "\n\n".join(f"{p['title']}\n→ ähnlich #{t['id']} [{t['status']}] {t['title']}\n{p['details'][:400]}"
+                           for p, t in repeats)
+        text += "\n\nKein neuer Task angelegt. Ist das etwas Neues, ergänze den genannten Task oder sag es hier."
+        try:
+            await asyncio.to_thread(_notify, api_base, channel, f"Erneut gemeldet ({sid})", text, f"scout:{sid}")
+        except Exception as e:
+            log.warning("[scout %s] channel notify failed: %s", sid, e)
+    if not created and not infos and not repeats and channel:
         # Each role has its own chat now (User 2026-11-01): a run that found
         # nothing says so, so the chat shows what the role has been doing.
         try:

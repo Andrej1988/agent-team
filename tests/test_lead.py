@@ -275,3 +275,18 @@ def test_role_stats_per_role(app_client, monkeypatch):
     assert rows["reviewer"]["stages"] == 2 and rows["reviewer"]["pass"] == 1 and rows["reviewer"]["fail"] == 1
     assert rows["reviewer"]["retried"] == 1 and rows["reviewer"]["avg_min"] == 2.0
     assert rows["implementation-engineer"]["cost_usd"] == 0.5
+
+
+def test_agents_get_409_for_a_restated_task_and_may_override(app_client, monkeypatch):
+    mod, c, _ = app_client
+    monkeypatch.setattr(mod, "_internal_client", lambda r: True)
+    first = c.post("/p/demo/api/tasks", json={"title": "Login einmal mit echtem Konto vom Handy prüfen"}).json()
+    r = c.post("/p/demo/api/tasks", json={"title": "Login live mit echtem Konto prüfen"})
+    assert r.status_code == 409
+    assert r.json()["detail"]["similar"][0]["id"] == first["id"]
+    r = c.post("/p/demo/api/tasks", json={"title": "Login live mit echtem Konto prüfen", "allow_similar": True})
+    assert r.status_code == 201
+    # the user is never asked
+    monkeypatch.setattr(mod, "_internal_client", lambda r: False)
+    monkeypatch.setattr(mod, "access_identity", lambda r: "me@example.com")
+    assert c.post("/p/demo/api/tasks", json={"title": "Login mit echtem Konto prüfen"}).status_code == 201

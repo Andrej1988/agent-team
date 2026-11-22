@@ -305,9 +305,17 @@ def list_tasks(status: Optional[str] = None) -> list[dict]:
 
 def recent_done(days: int) -> list[dict]:
     """Done tasks touched in the last ``days`` days, newest first (board column)."""
+    return recent_tasks(days, status="done")
+
+
+def recent_tasks(days: int, status: Optional[str] = None) -> list[dict]:
+    """Tasks (any status, or one) touched in the last ``days`` days, newest first."""
     cutoff = datetime.now(BERLIN) - timedelta(days=max(0, days))
     with _connect() as cx:
-        rows = cx.execute("SELECT * FROM tasks WHERE status = 'done' ORDER BY updated_at DESC").fetchall()
+        if status:
+            rows = cx.execute("SELECT * FROM tasks WHERE status = ? ORDER BY updated_at DESC", (status,)).fetchall()
+        else:
+            rows = cx.execute("SELECT * FROM tasks ORDER BY updated_at DESC").fetchall()
     out = []
     for r in rows:
         try:

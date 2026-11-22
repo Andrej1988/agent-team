@@ -36,7 +36,13 @@ def using(base_url: str) -> Iterator[None]:
 
 
 class TasksApiError(Exception):
-    """Raised on any non-2xx response from the tasks API."""
+    """Raised on any non-2xx response from the tasks API. ``status`` and
+    ``detail`` (str or the API's JSON object) are kept for callers."""
+
+    def __init__(self, message: str, status: Optional[int] = None, detail: Any = None):
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
 
 
 def _request(method: str, path: str, payload: Optional[dict] = None) -> Any:
@@ -58,7 +64,7 @@ def _request(method: str, path: str, payload: Optional[dict] = None) -> Any:
             detail = loads(e.read()).get("detail") or e.reason
         except Exception:
             detail = e.reason
-        raise TasksApiError(f"{e.code} {detail}") from e
+        raise TasksApiError(f"{e.code} {detail}", status=e.code, detail=detail) from e
     except urllib.error.URLError as e:
         raise TasksApiError(f"connection failed: {e.reason}") from e
 

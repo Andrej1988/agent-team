@@ -152,6 +152,9 @@ Tasks API (internal, no auth): {api}
   list            GET  {api}            (optional ?status=new)
   one task        GET  {api}/<id>
   create          POST {api}            {{"title","details","prio":1-3,"repos":[...]}}
+                  -> 409 "similar" if a task of the last 90 days says the same: look at it
+                     and extend it (PATCH details) instead; only if it really is something
+                     else, send again with "allow_similar": true
   ausarbeiten     POST {api}/<id>/refine          (read-only agent writes a spec)
   edit            PATCH {api}/<id>       {{"title"?,"details"?,"prio"?,"repos"?}}
   propose         POST {api}/<id>/propose {{"note": "why now, rough plan, risk, effort"}}
