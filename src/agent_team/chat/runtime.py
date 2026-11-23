@@ -71,7 +71,8 @@ APPROVAL_TIMEOUT = 900
 STEER_GRACE_SECONDS = 3.0
 # ScheduleWakeup stays blocked: autonomous wakeup turns would post unprompted.
 DISALLOWED_TOOLS: list[str] = ["ScheduleWakeup"]
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_ATTACH_BYTES = 25 * 1024 * 1024   # per attached file (images, Excel, PDF, …)
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp"}
 
 # One stream-json line can carry a whole image (Read of a screenshot: base64,
 # twice); the SDK's 1 MB default broke the stream on a 1.09 MB line.
@@ -346,6 +347,16 @@ def _hook_deny(reason: str) -> dict:
 
 
 # ---- per-channel state (bridge state.json equivalent) -------------------------
+
+def attachment_note(path: str) -> str:
+    """How the agent should open an attached file."""
+    if Path(path).suffix.lower() in IMAGE_EXT:
+        return f"[Attached image at {path} — use the Read tool to view it.]"
+    return (f"[Attached file at {path} — the user uploaded it. Open it with what fits: Read for "
+            "text, CSV and PDF; Excel/Word/ZIP via Python (openpyxl/pandas in a project "
+            "container, or stdlib zipfile + XML). The upload folder is temporary: copy the file "
+            "where it belongs if it should be kept.]")
+
 
 @dataclass
 class ChannelState:
@@ -862,7 +873,8 @@ class ChannelRuntime:
 
     def save_images(self, images: list[dict]) -> list[str]:
         """[{name, data: base64 or data URL}] -> absolute paths under the
-        channel's inbox, so the agent can Read them."""
+        channel's inbox, so the agent can open them. Any file type (the
+        field is still called images for older app versions)."""
         out = []
         d = channel_dir(self.ch.id) / "inbox"
         d.mkdir(parents=True, exist_ok=True)
@@ -871,9 +883,9 @@ class ChannelRuntime:
             if data.startswith("data:"):
                 data = data.split(",", 1)[-1]
             raw = base64.b64decode(data)
-            if len(raw) > MAX_IMAGE_BYTES:
-                raise ValueError("image too large (max 10 MB)")
-            safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(img.get("name") or "image.jpg"))[:80]
+            if len(raw) > MAX_ATTACH_BYTES:
+                raise ValueError("file too large (max 25 MB)")
+            safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(img.get("name") or "image.jpg"))[-80:]
             path = d / f"{uuid.uuid4().hex[:8]}_{safe}"
             path.write_bytes(raw)
             out.append(str(path))
@@ -896,8 +908,8 @@ class ChannelRuntime:
         if quote:
             prompt = f"[The user is replying to this earlier message:]\n{quote}\n\n[Their reply:]\n{text}"
         if image_paths:
-            attach = "\n\n".join(f"[Attached image at {p} — use the Read tool to view it.]" for p in image_paths)
-            prompt = f"{prompt}\n\n{attach}" if prompt else f"(no caption — image only)\n\n{attach}"
+            attach = "\n\n".join(attachment_note(p) for p in image_paths)
+            prompt = f"{prompt}\n\n{attach}" if prompt else f"(no caption — attachment only)\n\n{attach}"
 
         if self.lock.locked():
             if self.backend == "codex" or self.client is None:

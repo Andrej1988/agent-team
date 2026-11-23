@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  Archive, ArrowLeft, Check, ChevronDown, ChevronRight, CircleHelp, Copy, ImagePlus, Search, Loader2, Quote, RotateCcw, Send,
+  Archive, ArrowLeft, Check, ChevronDown, ChevronRight, CircleHelp, Copy, Paperclip, Search, Loader2, Quote, RotateCcw, Send,
   Settings2, ShieldAlert, Square, Trash2, TriangleAlert, Wrench, X,
 } from 'lucide-react'
 import TaskStatusBar from '../components/tasks/TaskStatusBar'
@@ -14,6 +14,8 @@ function hhmm(ts: string): string {
   const d = new Date(ts)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
 }
+
+const MAX_ATTACH_BYTES = 25 * 1024 * 1024
 
 function fileToDataUrl(f: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -254,7 +256,7 @@ function EventView({ ev, open, channel, onQuote, onDelete, onButton, pressed, do
           <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-sky-700 px-3 py-2 text-sm text-white">
             {ev.quote && <div className="mb-1 line-clamp-3 border-l-2 border-sky-300/60 pl-2 text-xs text-sky-100/80">{ev.quote}</div>}
             <div className="whitespace-pre-wrap break-words">{ev.text}</div>
-            {ev.images && ev.images.length > 0 && <div className="mt-1 text-xs text-sky-100/80">📎 {ev.images.length} Bild{ev.images.length > 1 ? 'er' : ''}</div>}
+            {ev.images && ev.images.length > 0 && <div className="mt-1 break-all text-xs text-sky-100/80">📎 {ev.images.map((p) => p.split('/').pop()?.replace(/^[0-9a-f]{8}_/, '')).join(', ')}</div>}
             <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px] text-sky-100/60">
               <DeleteButton onClick={del} />
               {hhmm(ev.ts)}
@@ -914,8 +916,10 @@ export default function Chat() {
     }
   }
   const addImages = async (files: FileList | File[] | null) => {
-    const list = Array.from(files ?? []).filter((f) => f.type.startsWith('image/'))
+    const list = Array.from(files ?? [])
     if (!list.length) return
+    const big = list.find((f) => f.size > MAX_ATTACH_BYTES)
+    if (big) { alert(`${big.name} ist zu groß (max. 25 MB).`); return }
     const add = await Promise.all(list.map(async (f, i) => ({
       name: f.name && f.name !== 'image.png' ? f.name : `screenshot-${Date.now()}-${i}.png`,
       data: await fileToDataUrl(f),
@@ -925,7 +929,7 @@ export default function Chat() {
   // Screenshots straight from the clipboard (Ctrl+V / long-press paste).
   const onPaste = (e: React.ClipboardEvent) => {
     const files = Array.from(e.clipboardData.items)
-      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
       .filter((f): f is File => f !== null)
     if (files.length) {
@@ -1053,8 +1057,10 @@ export default function Chat() {
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {images.map((im, i) => (
               <div key={i} className="relative">
-                <img src={im.data} alt={im.name} className="h-12 w-12 rounded object-cover" />
-                <button onClick={() => setImages((x) => x.filter((_, j) => j !== i))} className="absolute -right-1 -top-1 rounded-full bg-slate-700 p-0.5" aria-label="Bild entfernen"><X size={10} /></button>
+                {im.data.startsWith('data:image/')
+                  ? <img src={im.data} alt={im.name} className="h-12 w-12 rounded object-cover" />
+                  : <div className="flex h-12 max-w-[10rem] items-center gap-1 rounded bg-slate-700 px-2 text-xs text-slate-200"><Paperclip size={12} className="shrink-0" /><span className="truncate">{im.name}</span></div>}
+                <button onClick={() => setImages((x) => x.filter((_, j) => j !== i))} className="absolute -right-1 -top-1 rounded-full bg-slate-700 p-0.5" aria-label="Anhang entfernen"><X size={10} /></button>
               </div>
             ))}
           </div>
@@ -1069,8 +1075,8 @@ export default function Chat() {
           </div>
         )}
         <div className="flex items-end gap-2">
-          {!service && <button onClick={() => fileRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Bild anhängen"><ImagePlus size={20} /></button>}
-          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
+          {!service && <button onClick={() => fileRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Datei anhängen" title="Datei anhängen (Bild, Excel, PDF …)"><Paperclip size={20} /></button>}
+          <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
           <textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} rows={1} onPaste={onPaste}
             // Desktop: Enter sends, Shift+Enter is a new line. Phone: no Shift, so Enter is a
             // new line and the button sends. Never while an IME is composing.
