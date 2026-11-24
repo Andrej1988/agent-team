@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  Archive, ArrowLeft, Check, ChevronDown, ChevronRight, CircleHelp, Copy, Paperclip, Search, Loader2, Quote, RotateCcw, Send,
+  Archive, ArrowLeft, Check, ChevronDown, ChevronRight, CircleHelp, Copy, ImagePlus, Paperclip, Search, Loader2, Quote, RotateCcw, Send,
   Settings2, ShieldAlert, Square, Trash2, TriangleAlert, Wrench, X,
 } from 'lucide-react'
 import TaskStatusBar from '../components/tasks/TaskStatusBar'
@@ -470,6 +470,7 @@ export default function Chat() {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const followRef = useRef(true)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const imageRef = useRef<HTMLInputElement | null>(null)   // gallery (screenshots, photos)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   // The input grows with its text; only a very long message scrolls inside it.
   useLayoutEffect(() => {
@@ -1075,7 +1076,11 @@ export default function Chat() {
           </div>
         )}
         <div className="flex items-end gap-2">
-          {!service && <button onClick={() => fileRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Datei anhängen" title="Datei anhängen (Bild, Excel, PDF …)"><Paperclip size={20} /></button>}
+          {/* Two pickers: phones open the gallery only for accept="image/*";
+              without accept they show the file browser (Excel, PDF …). */}
+          {!service && <button onClick={() => imageRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Bild anhängen" title="Bild / Screenshot anhängen"><ImagePlus size={20} /></button>}
+          {!service && <button onClick={() => fileRef.current?.click()} className="pb-2 text-slate-400 hover:text-white" aria-label="Datei anhängen" title="Datei anhängen (Excel, PDF …)"><Paperclip size={20} /></button>}
+          <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
           <textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} rows={1} onPaste={onPaste}
             // Desktop: Enter sends, Shift+Enter is a new line. Phone: no Shift, so Enter is a
