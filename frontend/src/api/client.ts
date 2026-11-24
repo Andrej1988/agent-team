@@ -58,6 +58,12 @@ export const api = {
     start: (commit: string) => send<{ queued: unknown }>('/api/deploy', 'POST', { commit }),
   },
   projects: () => get<ProjectInfo[]>('/api/projects'),
+  system: {
+    containers: () => get<SystemContainers>('/api/system/containers'),
+    logs: (name: string, tail = 200) =>
+      get<{ container: string; lines: string[] }>(`/api/system/logs/${encodeURIComponent(name)}?tail=${tail}`),
+    logStreamUrl: (name: string) => `/api/system/logs/${encodeURIComponent(name)}/stream`,
+  },
   inbox: () => get<InboxItem[]>('/api/inbox'),
   chat: {
     channels: () => get<ChatChannel[]>('/api/chat/channels'),
@@ -634,4 +640,19 @@ export interface DeployStatus {
   error?: string | null
   services?: string[]
   busy?: { kind: 'chat' | 'task' | 'unknown'; id: string; label: string; project: string }[]
+}
+
+export interface SystemContainer {
+  name: string
+  group: string
+  compose_project: string | null
+  service: string | null
+  state: string | null
+  status: string | null
+  image: string | null
+}
+
+export interface SystemContainers {
+  groups: { id: string; label: string }[]
+  containers: SystemContainer[]
 }

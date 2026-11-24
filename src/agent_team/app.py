@@ -43,6 +43,7 @@ from .chat import service as chat_service
 from .tasks import db as tasks_db
 from .tasks import mirror as task_mirror
 from .tasks import router as tasks_router
+from .system import router as system_router
 
 log = logging.getLogger("agent_team")
 # Own log lines (inbox pushes etc.) at INFO, `ts | LEVEL | msg` like the
@@ -331,6 +332,7 @@ app.include_router(
 app.include_router(chat_web.router)
 app.include_router(chat_service.router)
 app.include_router(deploy.router)
+app.include_router(system_router.router)
 
 
 @app.get("/api/projects")
