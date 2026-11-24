@@ -27,6 +27,41 @@ function WeekBar({ used, target }: { used: number | null; target: number | null 
   )
 }
 
+// "2 h 14 min" / "37 min" / "3 T 4 h" until ts.
+export function until(ts: number | null, now = Date.now() / 1000): string {
+  if (!ts || ts <= now) return '—'                     // unknown or already reset
+  const m = Math.max(1, Math.round((ts - now) / 60))
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} h ${m % 60} min`
+  return `${Math.floor(h / 24)} T ${h % 24} h`
+}
+
+// Always-visible usage in the header: week %, 5-h %, time to the 5-h reset.
+export function HeaderBudget() {
+  const [b, setB] = useState<BudgetInfo | null>(null)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const load = () => api.budget.get().then(setB, () => {})
+    load()
+    const id = window.setInterval(load, 60_000)
+    const t = window.setInterval(() => tick((n) => n + 1), 20_000)   // countdown
+    return () => { window.clearInterval(id); window.clearInterval(t) }
+  }, [])
+  if (!b) return null
+  const d = b.decision
+  const hot = (v: number | null, at: number) => (v != null && v >= at ? 'text-amber-300' : 'text-slate-200')
+  return (
+    <Link to="/settings" title={`Woche ${d.week_used ?? '—'} % (Soll ${d.week_target ?? '—'} %), Reset ${when(d.week_resets_at)} · 5 h ${d.five_hour_used ?? '—'} %, Reset in ${until(d.five_hour_resets_at)}`}
+      className="ml-auto flex items-center gap-1.5 rounded px-2 py-1 text-[11px] leading-tight text-slate-400 hover:bg-slate-800">
+      <Gauge size={13} className={d.allowed ? 'text-emerald-400' : 'text-amber-400'} />
+      <span>W <b className={`font-semibold ${hot(d.week_used, 90)}`}>{d.week_used ?? '—'}%</b></span>
+      <span>5h <b className={`font-semibold ${hot(d.five_hour_used, 80)}`}>{d.five_hour_used ?? '—'}%</b></span>
+      <span>↻ {until(d.five_hour_resets_at)}</span>
+    </Link>
+  )
+}
+
 export function BudgetStrip() {
   const [b, setB] = useState<BudgetInfo | null>(null)
   useEffect(() => {

@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation, useParams, useSearchPara
 import { Bell, Lightbulb, Settings as SettingsIcon } from 'lucide-react'
 import { api, setProject, type ProjectInfo } from './api/client'
 import { Pill, PillRow } from './components/nav/Pills'
+import { HeaderBudget } from './components/Budget'
 import Chat from './pages/Chat'
 import ChatList from './pages/ChatList'
 import Inbox from './pages/Inbox'
