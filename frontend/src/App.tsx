@@ -101,6 +101,7 @@ export default function App() {
             <Pill to="/system" active={section === 'system'}>System</Pill>
           </PillRow>
           <div className="ml-auto flex items-center gap-1">
+            <HeaderBudget />
             <NavLink to="/share" className={iconCls} title="Link oder Idee als Task speichern" aria-label="Idee speichern">
               <Lightbulb size={17} />
             </NavLink>
