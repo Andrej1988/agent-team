@@ -265,7 +265,9 @@ def test_custom_chat_in_a_repo(chat_project, monkeypatch, tmp_path):
     ch = projects.get_channel(r["id"])
     assert ch.custom and ch.cwd == "/tmp/demo-app" and ch.label == "Umbau Swing" and r["custom"] is True
     assert sent == [(f"/channels/{ch.id}/message", {"text": "Los geht's"})]
-    # replies of own chats reach the inbox like configured channels
+    # replies of own chats reach the inbox like configured channels (the chat
+    # service logs the user's message, the fake forward above does not)
+    chatlog.ChannelLog(ch.id).append("user", text="Los geht's")
     chatlog.ChannelLog(ch.id).append("assistant", text="Antwort")
     assert any(i["channel"] == ch.id for i in inbox.chat_items(chat_project))
 
@@ -298,3 +300,31 @@ def test_idea_from_link_goes_to_the_lead(chat_project, monkeypatch):
     assert path == "/channels/demo-lead/message"
     assert "https://x.com/a/status/1" in sent["text"] and "Paper!" in sent["text"] and "für weekly?" in sent["text"]
     assert "api.fxtwitter.com" in sent["text"] and "NICHT vorschlagen/starten" in sent["text"]
+
+
+def test_inbox_takes_only_what_needs_the_user(chat_project):
+    lg = chatlog.ChannelLog("demo-chat")
+    lg.append("alert", text="nichts gefunden", title="Lauf fertig (po)", level="info")
+    lg.append("alert", text="x", title="Errors in container logs: api", level="info")
+    for t in ("10:01", "10:11", "10:21"):
+        lg.append("alert", text="DB-Fehler", title=f"Watchdog {t}–{t}")       # no level = important
+    lg.append("alert", text="bitte entscheiden", title="Vorschlag", level="info",
+              buttons=[[{"label": "Ja", "data": "yes"}]])                     # a card wants a tap
+    lg.append("system", text="Lead erklärt …")
+    lg.append("assistant", text="automatische Erklärung")                     # not asked for
+    items = inbox.chat_items(chat_project)
+    alerts = [i for i in items if i["kind"] == "alert"]
+    assert sorted(i["reason"].split(" (")[0] for i in alerts) == ["Vorschlag", "Watchdog 10:21–10:21"]
+    grouped = next(i for i in alerts if i["reason"].startswith("Watchdog"))
+    assert grouped["count"] == 3 and len(grouped["seqs"]) == 3 and "3×" in grouped["reason"]
+    assert not any(i["kind"] == "reply" for i in items)
+    lg.append("user", text="Und jetzt?")
+    lg.append("assistant", text="Antwort an dich")
+    assert any(i["kind"] == "reply" for i in inbox.chat_items(chat_project))
+    # per channel: all = everything, none = only open questions/approvals
+    inbox.set_channel_mode("demo-chat", "all")
+    assert len([i for i in inbox.chat_items(chat_project) if i["kind"] == "alert"]) == 4
+    inbox.set_channel_mode("demo-chat", "none")
+    assert inbox.chat_items(chat_project) == []
+    inbox.set_channel_mode("demo-chat", "important")
+    assert inbox.channel_modes() == {}

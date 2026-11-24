@@ -296,10 +296,12 @@ def _budget_ok(api_base: str) -> tuple[bool, str]:
         return True, f"pacer unreachable ({e})"
 
 
-def _notify(api_base: str, channel: str, title: str, text: str, source: str) -> None:
+def _notify(api_base: str, channel: str, title: str, text: str, source: str, level: str = "info") -> None:
+    """Post to a channel. Scout and lead reports are "info": they stay in the
+    chat; what needs a tap reaches the user as a card with buttons."""
     req = urllib.request.Request(
         f"{api_base}/api/notify/{channel}",
-        data=json.dumps({"title": title, "text": text, "source": source}).encode(),
+        data=json.dumps({"title": title, "text": text, "source": source, "level": level}).encode(),
         headers={"Content-Type": "application/json"}, method="POST")
     urllib.request.urlopen(req, timeout=15).read()
 

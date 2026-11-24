@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { api, type ClaudeAuth, type DeployStatus } from '../api/client'
+import { api, type ClaudeAuth, type DeployStatus, type InboxChannel, type InboxMode } from '../api/client'
+import { pillCls, PillRow } from '../components/nav/Pills'
 import { BudgetSettings } from '../components/Budget'
 
 function b64ToBytes(s: string): ArrayBuffer {
@@ -158,6 +159,53 @@ function DeploySection() {
   )
 }
 
+const MODE_LABEL: Record<InboxMode, string> = { important: 'Wichtiges', all: 'Alles', none: 'Nichts' }
+
+// Per chat channel: what of it lands in the inbox (and is pushed).
+function InboxChannels() {
+  const [chans, setChans] = useState<InboxChannel[] | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => { api.inboxChannels().then(setChans, (e) => setError(String(e))) }, [])
+  const set = async (id: string, mode: InboxMode) => {
+    try {
+      await api.setInboxChannel(id, mode)
+      setChans((cur) => (cur ?? []).map((c) => (c.id === id ? { ...c, mode } : c)))
+    } catch (e) { setError(String(e)) }
+  }
+  const byProject = new Map<string, InboxChannel[]>()
+  for (const c of chans ?? []) byProject.set(c.project_name, [...(byProject.get(c.project_name) ?? []), c])
+  return (
+    <section className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
+      <h2 className="font-semibold text-slate-100">Inbox je Kanal</h2>
+      <p className="mt-1 text-sm text-slate-400">
+        Fragen und Freigaben kommen immer. „Wichtiges“: als wichtig markierte Meldungen, Karten mit Knöpfen und
+        Antworten auf deine eigene Nachricht — Routine (Laufberichte, Scout-Vorschläge, Log-Fehler) bleibt im Chat.
+        Wiederholungen derselben Meldung erscheinen einmal mit Zähler.
+      </p>
+      {error && <div className="mt-2 text-xs text-rose-300">{error}</div>}
+      {chans === null ? <div className="mt-2 text-sm text-slate-500">Lade …</div> : (
+        <div className="mt-3 space-y-3">
+          {[...byProject.entries()].map(([proj, list]) => (
+            <div key={proj}>
+              <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">{proj}</div>
+              {list.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 py-1">
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-200" title={c.id}>{c.label}</span>
+                  <PillRow label={`Inbox ${c.label}`}>
+                    {(['important', 'all', 'none'] as InboxMode[]).map((m) => (
+                      <button key={m} className={pillCls(c.mode === m)} onClick={() => set(c.id, m)}>{MODE_LABEL[m]}</button>
+                    ))}
+                  </PillRow>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function Settings() {
   const [user, setUser] = useState('')
   const [log, setLog] = useState<string[]>([])
@@ -196,6 +244,7 @@ export default function Settings() {
       <ClaudeLogin />
       <BudgetSettings />
       <DeploySection />
+      <InboxChannels />
       <section className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
         <h2 className="font-semibold text-slate-100">Benachrichtigungen</h2>
         <p className="mt-1 text-sm text-slate-400">

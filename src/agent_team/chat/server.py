@@ -105,6 +105,9 @@ class Alert(BaseModel):
     text: str = Field(..., min_length=1, max_length=20_000)
     title: Optional[str] = Field(None, max_length=200)
     source: Optional[str] = Field(None, max_length=100)
+    # Inbox weight: "important" (needs the user) or "info" (stays in the chat).
+    # None counts as important — unknown senders are mostly alarms.
+    level: Optional[str] = Field(None, pattern="^(important|info)$")
     # Rows of buttons (service channels): a tap becomes a `command` event.
     buttons: Optional[list[list[Button]]] = Field(None, max_length=8)
 
@@ -193,9 +196,10 @@ def question(channel: str, req_id: str, body: QuestionAnswer) -> dict:
 def alert(channel: str, body: Alert) -> dict:
     rt = _rt(channel)
     if not body.buttons:
-        return rt.alert(body.text, body.title, body.source)
+        return rt.alert(body.text, body.title, body.source, body.level)
     rows = [[b.model_dump() for b in row[:6]] for row in body.buttons if row]
-    return rt.log.append("alert", text=redact(body.text), title=body.title, source=body.source, buttons=rows)
+    extra = {"level": body.level} if body.level else {}
+    return rt.log.append("alert", text=redact(body.text), title=body.title, source=body.source, buttons=rows, **extra)
 
 
 @app.post("/channels/{channel}/feed")

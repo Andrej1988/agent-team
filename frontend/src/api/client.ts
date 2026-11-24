@@ -58,6 +58,9 @@ export const api = {
     start: (commit: string) => send<{ queued: unknown }>('/api/deploy', 'POST', { commit }),
   },
   projects: () => get<ProjectInfo[]>('/api/projects'),
+  inboxChannels: () => get<InboxChannel[]>('/api/inbox/channels'),
+  setInboxChannel: (id: string, mode: InboxMode) =>
+    send<{ id: string; mode: InboxMode }>(`/api/inbox/channels/${encodeURIComponent(id)}`, 'POST', { mode }),
   system: {
     containers: () => get<SystemContainers>('/api/system/containers'),
     logs: (name: string, tail = 200) =>
@@ -355,6 +358,9 @@ export interface InboxItem {
   channel?: string
   // Transcript seq of a chat alert (lets the inbox delete it).
   seq?: number
+  // Grouped repeats of the same alert: all their seqs and how many.
+  seqs?: number[]
+  count?: number
   task_id: number | null
   title: string
   status: TaskStatus
@@ -655,4 +661,14 @@ export interface SystemContainer {
 export interface SystemContainers {
   groups: { id: string; label: string }[]
   containers: SystemContainer[]
+}
+
+export type InboxMode = 'important' | 'all' | 'none'
+
+export interface InboxChannel {
+  id: string
+  label: string
+  project: string
+  project_name: string
+  mode: InboxMode
 }

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -101,14 +102,68 @@ def items_for(project: projects.Project) -> list[dict[str, Any]]:
 # its replies are not pushed (still listed until read).
 CHAT_ACTIVE_S = 120.0
 
+# ---- what a chat channel sends to the inbox -----------------------------------
+# Per channel (settings): "important" (default) = alerts marked important or
+# carrying buttons, and replies to the user's own message; "all" = every
+# unread alert and reply; "none" = nothing but open questions/approvals.
+MODES = ("important", "all", "none")
+
+
+def _modes_file() -> Path:
+    return projects.DATA_ROOT / "chat" / "_inbox_modes.json"
+
+
+def channel_modes() -> dict[str, str]:
+    try:
+        raw = json.loads(_modes_file().read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in raw.items() if v in MODES} if isinstance(raw, dict) else {}
+
+
+def set_channel_mode(channel: str, mode: str) -> None:
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}")
+    modes = channel_modes()
+    if mode == "important":
+        modes.pop(channel, None)
+    else:
+        modes[channel] = mode
+    f = _modes_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(modes, indent=1, sort_keys=True))
+    tmp.replace(f)
+
+
+def alert_important(ev: dict) -> bool:
+    """Needs the user? A card with buttons does; otherwise the sender's level.
+    No level counts as important: unknown senders are mostly alarms, and the
+    routine senders (scouts, reports) mark themselves "info"."""
+    if ev.get("buttons"):
+        return True
+    return ev.get("level") != "info"
+
+
+_DIGITS = re.compile(r"\d+")
+
+
+def alert_group(ev: dict) -> str:
+    """Repeats of the same alert (titles differing only in numbers, times or
+    counts) form one inbox entry."""
+    return _DIGITS.sub("#", str(ev.get("title") or ev.get("source") or "Meldung")).strip()
+
 
 def chat_items(project: projects.Project) -> list[dict[str, Any]]:
-    """Per channel: open approvals/questions, unread alerts, and an unread
-    agent reply (one item per channel, the latest turn)."""
+    """Per channel: open approvals/questions always; unread alerts and the
+    latest unread agent reply as the channel's inbox mode allows (alerts
+    grouped by kind, one entry with a count)."""
     out: list[dict[str, Any]] = []
+    modes = channel_modes()
     # Own chats behave like configured channels (replies reach the inbox);
     # task and check chats do not (their tasks / alerts already do).
     for ch in list(project.channels) + [c for c in projects.custom_channels() if c.project == project.id]:
+        mode = modes.get(ch.id, "important")
         base = {"project": project.id, "project_name": project.name, "channel": ch.id,
                 "link": f"/chat/{ch.id}", "task_id": None, "prio": 2}
         for ev in chatlog.open_requests(ch.id):
@@ -122,18 +177,39 @@ def chat_items(project: projects.Project) -> list[dict[str, Any]]:
             out.append({**base, "key": f"chat:{ch.id}:{ev['seq']}", "title": ch.label,
                         "status": ev["type"], "kind": kind, "reason": reason,
                         "detail": detail[:500] or None, "updated_at": ev["ts"]})
+        if mode == "none":
+            continue
         read = chatlog.read_seq(ch.id)
         last_reply = None
+        by_user = False  # the turn being answered was started by the user's own message
+        groups: dict[str, dict[str, Any]] = {}
         for ev in chatlog.iter_tail(ch.id, max_bytes=500_000):
+            t = ev["type"]
+            if t == "user":
+                by_user = True
+            elif t == "system":
+                by_user = False  # automatic prompt (note), not typed by the user
             if ev["seq"] <= read:
                 continue
-            if ev["type"] == "alert":
-                out.append({**base, "key": f"chat:{ch.id}:{ev['seq']}", "seq": ev["seq"], "title": ch.label,
-                            "status": "alert", "kind": "alert",
-                            "reason": ev.get("title") or "Meldung",
-                            "detail": (ev.get("text") or "")[:500] or None, "updated_at": ev["ts"]})
-            elif ev["type"] in ("assistant", "error"):
+            if t == "alert":
+                if mode != "all" and not alert_important(ev):
+                    continue
+                g = groups.get(alert_group(ev))
+                if g is None:
+                    groups[alert_group(ev)] = {"first": ev, "last": ev, "n": 1, "seqs": [ev["seq"]]}
+                else:
+                    g["last"], g["n"] = ev, g["n"] + 1
+                    g["seqs"].append(ev["seq"])
+            elif t in ("assistant", "error") and (by_user or mode == "all"):
                 last_reply = ev
+        for g in groups.values():
+            first, last, n = g["first"], g["last"], g["n"]
+            title = last.get("title") or "Meldung"
+            out.append({**base, "key": f"chat:{ch.id}:{first['seq']}", "seq": last["seq"], "title": ch.label,
+                        "status": "alert", "kind": "alert",
+                        "reason": f"{title} ({n}× seit {str(first.get('ts') or '')[11:16]})" if n > 1 else title,
+                        "count": n, "seqs": g["seqs"][-200:],
+                        "detail": (last.get("text") or "")[:500] or None, "updated_at": last["ts"]})
         if last_reply is not None:
             out.append({**base, "key": f"chat:{ch.id}:reply:{last_reply['seq']}", "title": ch.label,
                         "status": "reply", "kind": "reply", "reason": "Neue Antwort",

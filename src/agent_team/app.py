@@ -32,6 +32,7 @@ from pathlib import Path
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -473,6 +474,36 @@ def project_budget(project: str) -> dict:
 @app.get("/api/inbox")
 def get_inbox() -> list[dict]:
     return inbox.all_items()
+
+
+@app.get("/api/inbox/channels")
+def inbox_channels() -> list[dict]:
+    """Chat channels that can send to the inbox, with their mode."""
+    modes = inbox.channel_modes()
+    out = []
+    for p in projects.all_projects():
+        for ch in list(p.channels) + [c for c in projects.custom_channels() if c.project == p.id]:
+            out.append({"id": ch.id, "label": ch.label, "project": p.id, "project_name": p.name,
+                        "mode": modes.get(ch.id, "important")})
+    return out
+
+
+class InboxMode(BaseModel):
+    mode: str
+
+
+@app.post("/api/inbox/channels/{channel}")
+def set_inbox_channel(channel: str, body: InboxMode, request: Request) -> dict:
+    if getattr(request.state, "user", None) in ("internal", "notify"):
+        raise HTTPException(403, "nur in der App")
+    try:
+        projects.get_channel(channel)
+        inbox.set_channel_mode(channel, body.mode)
+    except projects.UnknownProject:
+        raise HTTPException(404, f"unbekannter Kanal {channel!r}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"id": channel, "mode": body.mode}
 
 
 # ---- SPA ---------------------------------------------------------------------

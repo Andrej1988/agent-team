@@ -1052,8 +1052,10 @@ class ChannelRuntime:
         await self.drop_client()
         self.log.append("system", text="Sitzung zurückgesetzt — die nächste Nachricht startet eine neue.")
 
-    def alert(self, text: str, title: Optional[str] = None, source: Optional[str] = None) -> dict:
-        return self.log.append("alert", text=redact(text), title=title, source=source)
+    def alert(self, text: str, title: Optional[str] = None, source: Optional[str] = None,
+              level: Optional[str] = None) -> dict:
+        extra = {"level": level} if level else {}
+        return self.log.append("alert", text=redact(text), title=title, source=source, **extra)
 
     def expire_stale_requests(self) -> None:
         """Requests from a previous process can never be answered."""

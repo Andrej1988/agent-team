@@ -44,7 +44,7 @@ export default function Inbox({ onCount }: { onCount?: (n: number) => void }) {
     e.stopPropagation()
     if (!i.channel || i.seq == null) return
     try {
-      await api.chat.delete(i.channel, { seqs: [i.seq] })
+      await api.chat.delete(i.channel, { seqs: i.seqs?.length ? i.seqs : [i.seq] })
       setItems((cur) => {
         const next = (cur ?? []).filter((x) => x.key !== i.key)
         onCount?.(next.length)
@@ -84,7 +84,7 @@ export default function Inbox({ onCount }: { onCount?: (n: number) => void }) {
               <span className="text-slate-400">{i.project_name}</span>
               <span className="ml-auto text-slate-500">{age(i.updated_at)}</span>
               {i.kind === 'alert' && i.seq != null && (
-                <button onClick={(e) => remove(e, i)} className="text-slate-500 hover:text-rose-300" aria-label="Meldung löschen" title="Meldung löschen">
+                <button onClick={(e) => remove(e, i)} className="text-slate-500 hover:text-rose-300" aria-label="Meldung löschen" title={i.count && i.count > 1 ? `Alle ${i.count} löschen` : 'Meldung löschen'}>
                   <Trash2 size={14} />
                 </button>
               )}

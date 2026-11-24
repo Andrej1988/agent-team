@@ -356,4 +356,6 @@ async def notify(project: str, channel: str, request: Request) -> Any:
     out = {"text": str(body["text"]), "title": body.get("title"), "source": body.get("source")}
     if body.get("buttons"):
         out["buttons"] = body["buttons"]  # e.g. the lead's park / merge cards
+    if body.get("level") in ("important", "info"):
+        out["level"] = body["level"]  # inbox weight (see inbox.alert_important)
     return await _forward("POST", f"/channels/{channel}/alert", out)
