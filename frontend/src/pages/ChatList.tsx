@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, MessageSquare, Plus } from 'lucide-react'
 import { api, type ChatChannel } from '../api/client'
+import { pillCls, PillRow } from '../components/nav/Pills'
 
 function when(ts: string | null): string {
   if (!ts) return ''
@@ -13,12 +14,26 @@ function when(ts: string | null): string {
 }
 
 const SCROLL_KEY = 'at.chatlist.scroll'
+const PROJECT_KEY = 'at.chatlist.project'
 
 export default function ChatList({ onUnread }: { onUnread?: (n: number) => void }) {
   const [channels, setChannels] = useState<ChatChannel[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
   const [showNew, setShowNew] = useState(false)
+  const [names, setNames] = useState<Record<string, string>>({})
+  const [params, setParams] = useSearchParams()
+  let stored = ''
+  try { stored = localStorage.getItem(PROJECT_KEY) ?? '' } catch { /* private mode */ }
+  const chosen = params.get('p') ?? stored
+  const choose = (p: string) => {
+    try { localStorage.setItem(PROJECT_KEY, p) } catch { /* private mode */ }
+    setParams(p ? { p } : {}, { replace: true })
+  }
+
+  useEffect(() => {
+    api.projects().then((ps) => setNames(Object.fromEntries(ps.map((p) => [p.id, p.name]))), () => {})
+  }, [])
 
   useEffect(() => {
     const load = () => api.chat.channels().then((c) => {
@@ -55,24 +70,38 @@ export default function ChatList({ onUnread }: { onUnread?: (n: number) => void 
 
   // Per project: the lead channel first, then the other channels, then the
   // task chats (newest activity first) under their own heading.
-  const archivedCount = channels.filter((c) => c.archived).length
+  const projectIds = [...new Set(channels.map((c) => c.project))]
+  const project = projectIds.includes(chosen) ? chosen : ''
+  const unreadOf = (p: string) => channels.filter((c) => !c.archived && (!p || c.project === p)).reduce((n, c) => n + c.unread, 0)
+  const inProject = project ? channels.filter((c) => c.project === project) : channels
+  const archivedCount = inProject.filter((c) => c.archived).length
   const byProject = new Map<string, ChatChannel[]>()
-  for (const c of channels.filter((x) => showArchived || !x.archived)) byProject.set(c.project, [...(byProject.get(c.project) ?? []), c])
+  for (const c of inProject.filter((x) => showArchived || !x.archived)) byProject.set(c.project, [...(byProject.get(c.project) ?? []), c])
   const sections: { key: string; title: string; list: ChatChannel[] }[] = []
-  for (const [project, list] of byProject) {
+  for (const [proj, list] of byProject) {
     const tasks = list.filter((c) => c.task_id != null)
     const checks = list.filter((c) => c.check_of)
       .sort((a, b) => (b.last_ts ?? '').localeCompare(a.last_ts ?? ''))
     const rest = list.filter((c) => c.task_id == null && !c.check_of).sort((a, b) => Number(!!b.lead) - Number(!!a.lead))
-    sections.push({ key: project, title: project, list: rest })
-    if (tasks.length) sections.push({ key: `${project}-tasks`, title: `${project} · Tasks`, list: tasks })
-    if (checks.length) sections.push({ key: `${project}-checks`, title: `${project} · Prüfungen`, list: checks })
+    const name = names[proj] ?? proj
+    if (rest.length) sections.push({ key: proj, title: name, list: rest })
+    if (tasks.length) sections.push({ key: `${proj}-tasks`, title: `${name} · Tasks`, list: tasks })
+    if (checks.length) sections.push({ key: `${proj}-checks`, title: `${name} · Prüfungen`, list: checks })
   }
+  const badge = (n: number) => n > 0 ? <span className="rounded-full bg-sky-600 px-1.5 text-[11px] font-semibold text-white">{n}</span> : null
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
+      {projectIds.length > 1 && (
+        <PillRow label="Projekt">
+          <button className={pillCls(project === '')} onClick={() => choose('')}>Alle {badge(unreadOf(''))}</button>
+          {projectIds.map((p) => (
+            <button key={p} className={pillCls(project === p)} onClick={() => choose(p)}>{names[p] ?? p} {badge(unreadOf(p))}</button>
+          ))}
+        </PillRow>
+      )}
       {showNew
-        ? <NewChat onCancel={() => setShowNew(false)} />
+        ? <NewChat initial={project} onCancel={() => setShowNew(false)} />
         : <button onClick={() => setShowNew(true)} className="flex w-full items-center justify-center gap-2 rounded-lg border border-sky-700 bg-sky-900/30 px-3 py-2.5 text-sm text-sky-100 hover:bg-sky-900/50">
             <Plus size={16} /> Neuer Chat für ein Repo
           </button>}
@@ -111,7 +140,7 @@ export default function ChatList({ onUnread }: { onUnread?: (n: number) => void 
 
 
 // "Neuer Chat": an own, long-lived chat in a project's root or one of its repos.
-function NewChat({ onCancel }: { onCancel: () => void }) {
+function NewChat({ onCancel, initial = '' }: { onCancel: () => void; initial?: string }) {
   const nav = useNavigate()
   const [opts, setOpts] = useState<{ project: string; name: string; root: string; repos: string[] }[] | null>(null)
   const [project, setProject] = useState('')
@@ -121,7 +150,7 @@ function NewChat({ onCancel }: { onCancel: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   useEffect(() => {
-    api.chat.newOptions().then((o) => { setOpts(o); setProject(o[0]?.project ?? '') }, (e) => setError(String(e)))
+    api.chat.newOptions().then((o) => { setOpts(o); setProject((o.find((x) => x.project === initial) ?? o[0])?.project ?? '') }, (e) => setError(String(e)))
   }, [])
   const current = opts?.find((o) => o.project === project)
   const create = async () => {
