@@ -7,6 +7,7 @@ import Chat from './pages/Chat'
 import ChatList from './pages/ChatList'
 import Inbox from './pages/Inbox'
 import Logs from './pages/Logs'
+import System from './pages/System'
 import Settings from './pages/Settings'
 import Share from './pages/Share'
 import Tasks from './pages/Tasks'
@@ -54,7 +55,8 @@ const iconCls = ({ isActive }: { isActive: boolean }) =>
 export default function App() {
   const location = useLocation()
   const section = location.pathname.startsWith('/p/') || location.pathname.startsWith('/tasks') ? 'tasks'
-    : location.pathname.startsWith('/logs') ? 'logs' : ''
+    : location.pathname.startsWith('/logs') ? 'logs'
+    : location.pathname.startsWith('/system') ? 'system' : ''
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [inboxCount, setInboxCount] = useState(0)
   const [chatUnread, setChatUnread] = useState(0)
@@ -95,6 +97,7 @@ export default function App() {
             <Pill to="/chat">Chats <Badge n={chatUnread} cls="bg-sky-600 text-white" /></Pill>
             <Pill to="/tasks" active={section === 'tasks'}>Tasks</Pill>
             <Pill to="/logs" active={section === 'logs'}>Logs</Pill>
+            <Pill to="/system" active={section === 'system'}>System</Pill>
           </PillRow>
           <div className="ml-auto flex items-center gap-1">
             <NavLink to="/share" className={iconCls} title="Link oder Idee als Task speichern" aria-label="Idee speichern">
@@ -115,6 +118,8 @@ export default function App() {
           <Route path="/logs" element={<Logs />} />
           <Route path="/logs/:group" element={<Logs />} />
           <Route path="/logs/:group/:container" element={<Logs />} />
+          <Route path="/system" element={<System />} />
+          <Route path="/system/:part" element={<System />} />
           <Route path="/chat" element={<ChatList onUnread={setChatUnread} />} />
           <Route path="/chat/:channel" element={<Chat key={location.pathname} />} />
           <Route path="/settings" element={<Settings />} />

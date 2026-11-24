@@ -106,3 +106,29 @@ def test_not_configured_is_503(client, monkeypatch):
     monkeypatch.delenv("AT_DOCKER_RO_URL")
     monkeypatch.setattr(docker_ro, "_client", lambda timeout=10.0: docker_ro.httpx.AsyncClient(base_url=docker_ro.base_url()))
     assert c.get("/api/system/containers").status_code == 503
+
+
+# ---- Docker and host metrics ---------------------------------------------------
+
+from agent_team.system import docker_metrics  # noqa: E402
+
+
+def test_stats_numbers_and_disk_summary():
+    raw = {"cpu_stats": {"cpu_usage": {"total_usage": 300}, "system_cpu_usage": 2000, "online_cpus": 4},
+           "precpu_stats": {"cpu_usage": {"total_usage": 100}, "system_cpu_usage": 1000},
+           "memory_stats": {"usage": 512 * 1048576, "limit": 1024 * 1048576}}
+    assert docker_metrics.stats_numbers(raw) == {"cpu_pct": 80.0, "mem_mb": 512.0, "mem_pct": 50.0}
+    assert docker_metrics.stats_numbers({})["cpu_pct"] == 0.0
+    df = {"Images": [{"Size": 1048576 * 10}], "Containers": [{"SizeRw": 1048576}],
+          "Volumes": [{"UsageData": {"Size": -1}}, {"UsageData": {"Size": 1048576 * 2}}], "BuildCache": []}
+    out = docker_metrics.disk_summary(df)
+    assert out["images"] == {"count": 1, "size_mb": 10.0} and out["volumes"]["size_mb"] == 2.0 and out["total_mb"] == 13.0
+    assert docker_metrics.started_at("Exited (0) 2 hours ago") == ""
+    assert docker_metrics.started_at("Up 3 hours (healthy)").endswith("Z")
+
+
+def test_host_metrics_need_the_collector(client, monkeypatch):
+    mod, c, _ = client
+    monkeypatch.delenv("AT_SYSMON_URL", raising=False)
+    assert c.get("/api/system/host").status_code == 503
+    assert c.get("/api/system/host/unknown").status_code == 404

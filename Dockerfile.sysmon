@@ -1,0 +1,12 @@
+# Host metrics collector (agent_team.sysmon): psutil reads the host's /proc
+# and /sys (host-wide inside a container), nvidia-smi the GPUs, a JSON file
+# from a separate SMART scanner the drives. Read-only, internal network only.
+FROM python:3.12-slim
+RUN pip install --no-cache-dir fastapi==0.130.0 uvicorn==0.34.2 psutil==7.2.2
+WORKDIR /app
+COPY src/agent_team/__init__.py /app/src/agent_team/__init__.py
+COPY src/agent_team/sysmon/ /app/src/agent_team/sysmon/
+RUN useradd -u 1000 -m app
+USER app
+ENV PYTHONPATH=/app/src PYTHONUNBUFFERED=1 TZ=Europe/Berlin
+CMD ["python", "-m", "agent_team.sysmon"]

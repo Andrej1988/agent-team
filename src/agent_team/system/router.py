@@ -10,8 +10,10 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+import os
+
 from .. import projects
-from . import docker_ro, logs
+from . import docker_metrics, docker_ro, logs
 
 router = APIRouter(prefix="/api/system")
 
@@ -90,3 +92,52 @@ async def container_log_stream(name: str, request: Request):
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ---- Docker metrics -------------------------------------------------------------
+
+@router.get("/docker/containers")
+async def docker_containers():
+    try:
+        return await docker_metrics.containers()
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@router.get("/docker/disk")
+async def docker_disk():
+    try:
+        return await docker_metrics.disk()
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+# ---- host metrics: proxied to the collector (agent_team.sysmon) -------------------
+
+_HOST_PATHS = {"": "/host", "drives": "/host/drives", "temperature-history": "/host/temperature-history",
+               "load-history": "/host/load-history", "usage-history": "/host/usage-history"}
+
+
+async def _sysmon(path: str, params: dict):
+    url = (os.environ.get("AT_SYSMON_URL") or "").rstrip("/")
+    if not url:
+        raise HTTPException(503, "AT_SYSMON_URL ist nicht gesetzt — Host-Überwachung nicht eingerichtet")
+    try:
+        async with httpx.AsyncClient(base_url=url, timeout=20.0) as c:
+            r = await c.get(path, params=params)
+            r.raise_for_status()
+            return r.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Host-Sammler nicht erreichbar: {e}")
+
+
+@router.get("/host")
+async def host():
+    return await _sysmon("/host", {})
+
+
+@router.get("/host/{kind}")
+async def host_part(kind: str, hours: float = Query(24.0, ge=0.1, le=168.0)):
+    if kind not in _HOST_PATHS or not kind:
+        raise HTTPException(404, "unbekannt")
+    return await _sysmon(_HOST_PATHS[kind], {} if kind == "drives" else {"hours": hours})
