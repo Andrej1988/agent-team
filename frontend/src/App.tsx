@@ -92,7 +92,7 @@ export default function App() {
     <div className="min-h-screen">
       <header ref={headerRef} className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/95 backdrop-blur pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
-          <span className="font-semibold text-white">agent-team</span>
+          <span className="hidden font-semibold text-white sm:inline">agent-team</span>
           <PillRow label="Bereich" className="order-last w-full sm:order-none sm:w-auto [&>a]:flex-1 sm:[&>a]:flex-none [&>a]:justify-center">
             <Pill to="/inbox">Inbox <Badge n={inboxCount} cls="bg-amber-500 text-slate-900" /></Pill>
             <Pill to="/chat">Chats <Badge n={chatUnread} cls="bg-sky-600 text-white" /></Pill>

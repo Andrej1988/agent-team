@@ -53,7 +53,7 @@ export function HeaderBudget() {
   const hot = (v: number | null, at: number) => (v != null && v >= at ? 'text-amber-300' : 'text-slate-200')
   return (
     <Link to="/settings" title={`Woche ${d.week_used ?? '—'} % (Soll ${d.week_target ?? '—'} %), Reset ${when(d.week_resets_at)} · 5 h ${d.five_hour_used ?? '—'} %, Reset in ${until(d.five_hour_resets_at)}`}
-      className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] leading-tight text-slate-400 hover:bg-slate-800">
+      className="flex items-center gap-1.5 whitespace-nowrap rounded px-2 py-1 text-[11px] leading-tight text-slate-400 hover:bg-slate-800">
       <Gauge size={13} className={d.allowed ? 'text-emerald-400' : 'text-amber-400'} />
       <span>W <b className={`font-semibold ${hot(d.week_used, 90)}`}>{d.week_used ?? '—'}%</b></span>
       <span>5h <b className={`font-semibold ${hot(d.five_hour_used, 80)}`}>{d.five_hour_used ?? '—'}%</b></span>
