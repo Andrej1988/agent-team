@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 import time
 
-from . import projects, push
+from . import browser_view, projects, push
 from .chat import log as chatlog
 from .tasks import db as tasks_db
 
@@ -154,6 +154,10 @@ def alert_group(ev: dict) -> str:
     return _DIGITS.sub("#", str(ev.get("title") or ev.get("source") or "Meldung")).strip()
 
 
+# The agent's request to take over the logged-in browser (chat/runtime.py BROWSER_NOTE).
+TAKEOVER_RE = re.compile(r"übernimm\s+(bitte\s+)?den\s+browser|browser\s+übernehmen", re.IGNORECASE)
+
+
 def chat_items(project: projects.Project) -> list[dict[str, Any]]:
     """Per channel: open approvals/questions always; unread alerts and the
     latest unread agent reply as the channel's inbox mode allows (alerts
@@ -211,8 +215,11 @@ def chat_items(project: projects.Project) -> list[dict[str, Any]]:
                         "count": n, "seqs": g["seqs"][-200:],
                         "detail": (last.get("text") or "")[:500] or None, "updated_at": last["ts"]})
         if last_reply is not None:
-            out.append({**base, "key": f"chat:{ch.id}:reply:{last_reply['seq']}", "title": ch.label,
-                        "status": "reply", "kind": "reply", "reason": "Neue Antwort",
+            takeover = bool(ch.browser_mcp) and bool(TAKEOVER_RE.search(last_reply.get("text") or ""))
+            extra = {"browser": browser_view.view_url(ch.project)} if takeover else {}
+            out.append({**base, **extra, "key": f"chat:{ch.id}:reply:{last_reply['seq']}", "title": ch.label,
+                        "status": "reply", "kind": "takeover" if takeover else "reply",
+                        "reason": "Bitte den Browser übernehmen" if takeover else "Neue Antwort",
                         "detail": (last_reply.get("text") or "")[:500] or None,
                         "updated_at": last_reply["ts"],
                         "quiet": time.time() - chatlog.read_at(ch.id) < CHAT_ACTIVE_S})

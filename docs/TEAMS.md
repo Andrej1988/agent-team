@@ -118,7 +118,8 @@ scouts:
     # optional:
     prepare: fetch.sh           # scouts/fetch.sh holt zuerst Daten (ohne LLM) und schreibt
                                 # sie nach $SCOUT_OUT (Zeitfenster: $SCOUT_SINCE … $SCOUT_NOW)
-    browser: true               # headless Chromium (nur im Docker-Betrieb)
+    browser: true               # headless Chromium (nur im Docker-Betrieb); "shared" = der
+                                # angemeldete Projekt-Browser (docs/BROWSER-TAKEOVER.md)
     ledger: true                # erledigte/blockierte Tasks im Prompt
     always: true                # läuft auch, wenn das Budget „warten“ sagt (nicht bei Pause)
   - id: lead                    # Lead-Lauf: empfiehlt, was als Nächstes startet

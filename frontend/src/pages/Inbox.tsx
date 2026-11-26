@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, CircleHelp, Eye, MessageSquare, PlayCircle, Trash2, TriangleAlert } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, CircleHelp, Eye, Globe, MessageSquare, PlayCircle, Trash2, TriangleAlert } from 'lucide-react'
 import { api, type InboxItem } from '../api/client'
 import { BudgetStrip } from '../components/Budget'
 
@@ -11,6 +11,7 @@ const KIND_STYLE: Record<string, { icon: JSX.Element; cls: string; label: string
   review: { icon: <Eye size={16} />, cls: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200', label: 'Prüfen' },
   alert: { icon: <TriangleAlert size={16} />, cls: 'border-orange-500/50 bg-orange-500/10 text-orange-200', label: 'Meldung' },
   reply: { icon: <MessageSquare size={16} />, cls: 'border-slate-500/50 bg-slate-500/10 text-slate-200', label: 'Antwort' },
+  takeover: { icon: <Globe size={16} />, cls: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200', label: 'Browser' },
 }
 
 function age(iso: string): string {
@@ -94,6 +95,13 @@ export default function Inbox({ onCount }: { onCount?: (n: number) => void }) {
             </div>
             <div className="mt-0.5 text-sm text-slate-300">{i.reason}</div>
             {i.detail && <div className="mt-1 line-clamp-3 text-xs text-slate-400 whitespace-pre-wrap">{i.detail}</div>}
+            {i.browser && (
+              // Take the logged-in browser over (login, code, captcha); then answer "fertig" in the chat.
+              <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.open(i.browser!, '_blank', 'noopener') }}
+                className="mt-2 inline-flex items-center gap-1 rounded border border-emerald-700 px-2 py-1 text-xs text-emerald-200 hover:text-white">
+                <Globe size={12} /> Browser übernehmen
+              </button>
+            )}
           </Link>
         )
       })}

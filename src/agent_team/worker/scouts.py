@@ -10,6 +10,9 @@
         max_proposals: 3
         channel: myproject        # chat channel that gets the summary
         browser: true              # optional: headless Chromium via Playwright MCP
+                                   # (or "shared": the project's persistent, logged-in
+                                   #  browser at WORKER_BROWSER_MCP; actions in the
+                                   #  user's name are refused, browser_guard.py)
         ledger: true               # optional: earlier results (done/blocked tasks) in the prompt
         lead: true                 # optional: the team lead's run instead (worker/lead.py)
         report: true               # optional: the weekly report instead (worker/report.py)
@@ -245,6 +248,14 @@ async def run_prepare(scout: dict, state: dict, team_dir: Path, control: Path, c
     return out
 
 
+def shared_browser_config() -> dict:
+    """The project's persistent browser (Playwright MCP over HTTP)."""
+    url = os.environ.get("WORKER_BROWSER_MCP", "").strip()
+    if not url:
+        raise RuntimeError("browser: shared needs WORKER_BROWSER_MCP")
+    return {"mcpServers": {"browser": {"type": "http", "url": url}}}
+
+
 def browser_mcp_config(output_dir: str, viewport: str = "390x844") -> dict:
     """Playwright MCP over the image's Chromium: headless, phone viewport,
     in-memory profile (every run starts logged out), screenshots to output_dir."""
@@ -347,7 +358,16 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
         prompt += (f"\n\n## Prepared input\nRead `{prepared}` first — built for this run "
                    f"(window since the last run). Earlier ones are next to it.\n")
     mcp_path = None
-    if scout.get("browser"):
+    if scout.get("browser") == "shared":
+        mcp_path = control / "scouts" / f"{sid}.mcp.json"
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_path.write_text(json.dumps(shared_browser_config()))
+        prompt += ("\n\n## Browser\nYou have the project's persistent Chromium (tools `mcp__browser__*`), "
+                   "logged in to the user's accounts — use it to READ what needs a login (replies, "
+                   "notifications, your earlier posts). Anything that acts in the user's name (posting, "
+                   "commenting, voting, sending, signing up, accepting) is refused in this unattended run: "
+                   "put it in your report as a suggestion instead. Close the tabs you opened when done.\n")
+    elif scout.get("browser"):
         run_dir = Path(cwd) / str(scout.get("artifacts") or f".agent-team/scouts/{sid}") / time.strftime("%Y-%m-%d")
         run_dir.mkdir(parents=True, exist_ok=True)
         mcp_path = control / "scouts" / f"{sid}.mcp.json"
@@ -359,7 +379,7 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
     log.info("[scout %s] starting (model=%s, browser=%s)", sid, scout.get("model") or "<default>",
              bool(scout.get("browser")))
     text, tools = await _run_agent(prompt, scout.get("model"), cwd, mcp_path)
-    browser_uses = sum(n for t, n in tools.items() if t.startswith("mcp__playwright__"))
+    browser_uses = sum(n for t, n in tools.items() if t.startswith(("mcp__playwright__", "mcp__browser__")))
     log.info("[scout %s] tools used: %s", sid, dict(sorted(tools.items(), key=lambda x: -x[1])))
     state["last_tools"] = tools
     # Keep the full report: a run with zero proposals should still say why.

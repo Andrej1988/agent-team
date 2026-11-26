@@ -328,3 +328,21 @@ def test_inbox_takes_only_what_needs_the_user(chat_project):
     assert inbox.chat_items(chat_project) == []
     inbox.set_channel_mode("demo-chat", "important")
     assert inbox.channel_modes() == {}
+
+
+def test_inbox_takeover_request(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "DATA_ROOT", tmp_path)
+    monkeypatch.setenv("AT_BROWSER_VIEWS", '{"demo": "http://browser-demo:6080"}')
+    ch = projects.Channel(id="demo-mkt", project="demo", label="Marketing", cwd="/tmp",
+                          browser_mcp="http://browser-demo:8931/mcp")
+    p = projects.Project(id="demo", name="Demo", data_dir=tmp_path / "projects" / "demo",
+                         team_dir=tmp_path / "teams" / "demo", channels=(ch,), tasks=False)
+    lg = chatlog.ChannelLog("demo-mkt")
+    lg.append("user", text="Melde dich bei dem Forum an")
+    lg.append("assistant", text="Bitte übernimm den Browser: Login auf forum.example.invalid")
+    item = next(i for i in inbox.chat_items(p) if i["channel"] == "demo-mkt")
+    assert item["kind"] == "takeover" and item["browser"].startswith("/browser/demo/vnc.html")
+    lg.append("user", text="fertig")
+    lg.append("assistant", text="Danke, ich bin drin.")
+    item = next(i for i in inbox.chat_items(p) if i["channel"] == "demo-mkt")
+    assert item["kind"] == "reply" and "browser" not in item

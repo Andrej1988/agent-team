@@ -371,6 +371,7 @@ export interface InboxItem {
   detail: string | null
   updated_at: string
   prio: TaskPrio
+  browser?: string  // takeover request: live view link
 }
 
 // ---------------------------------------------------------------------------

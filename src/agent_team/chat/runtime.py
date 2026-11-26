@@ -55,6 +55,7 @@ from claude_agent_sdk import (
 
 from .. import budget, git_identity, guard, memory_share, projects
 from ..agent_notes import QUIET_NOTE
+from .. import browser_guard
 from ..log_redaction import redact
 from . import claude_login, scope
 from .log import ChannelLog, channel_dir, open_requests
@@ -618,25 +619,11 @@ class ChannelRuntime:
                     message="Ask your question and the options as plain text in your "
                     "reply; the user will answer in a normal message."
                 )
-            req_id, fut = self._new_pending("permission")
             suggestions = ctx.suggestions or []
-            self.log.append(
-                "permission", req_id=req_id, tool=tool_name,
-                title=ctx.title or f"Claude möchte {tool_name} benutzen",
-                detail=redact(_tool_detail(tool_name, tool_input)),
-                blocked_path=ctx.blocked_path, rules=_suggestion_rules(suggestions),
-                can_always=bool(suggestions),
-            )
-            log.info("[%s] approval requested tool=%s id=%s", self.ch.id, tool_name, req_id)
-            try:
-                decision = await asyncio.wait_for(fut, timeout=APPROVAL_TIMEOUT)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                decision = "timeout"
-            finally:
-                self.pending.pop(req_id, None)
-            outcome = {"once": "einmal erlaubt", "always": "immer erlaubt", "deny": "abgelehnt",
-                       "timeout": "keine Antwort — abgelehnt"}.get(decision, decision)
-            self.log.append("resolved", req_id=req_id, outcome=outcome)
+            decision = await self.ask_approval(
+                tool_name, ctx.title or f"Claude möchte {tool_name} benutzen",
+                redact(_tool_detail(tool_name, tool_input)), blocked_path=ctx.blocked_path,
+                rules=_suggestion_rules(suggestions), can_always=bool(suggestions))
             if decision == "once":
                 return PermissionResultAllow(updated_input=tool_input)
             if decision == "always":
@@ -649,6 +636,53 @@ class ChannelRuntime:
             return PermissionResultDeny(message="The user denied this. Don't retry it; ask them or try another approach.")
 
         return can_use_tool
+
+    async def ask_approval(self, tool_name: str, title: str, detail: str, **extra) -> str:
+        """Approval card in the chat; "once" / "always" / "deny" / "timeout"."""
+        req_id, fut = self._new_pending("permission")
+        extra.setdefault("can_always", False)
+        extra.setdefault("blocked_path", None)
+        extra.setdefault("rules", [])
+        self.log.append("permission", req_id=req_id, tool=tool_name, title=title, detail=detail, **extra)
+        log.info("[%s] approval requested tool=%s id=%s", self.ch.id, tool_name, req_id)
+        try:
+            decision = await asyncio.wait_for(fut, timeout=APPROVAL_TIMEOUT)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            decision = "timeout"
+        finally:
+            self.pending.pop(req_id, None)
+        outcome = {"once": "einmal erlaubt", "always": "immer erlaubt", "deny": "abgelehnt",
+                   "timeout": "keine Antwort — abgelehnt"}.get(decision, decision)
+        self.log.append("resolved", req_id=req_id, outcome=outcome)
+        return decision
+
+    def make_browser_hook(self):
+        """Persistent browser: refuse tools that bypass the check, ask the user
+        before anything that acts in their name (browser_guard.py)."""
+        typed: list[str] = []
+
+        async def hook(input_data: dict, tool_use_id, context):
+            tool, inp = (input_data or {}).get("tool_name") or "", (input_data or {}).get("tool_input") or {}
+            text = browser_guard.typed_text(tool, inp)
+            if text:
+                typed[:] = (typed + [text])[-5:]
+            busy = browser_guard.busy_reason(tool, self.ch.project)
+            if busy:
+                return browser_guard.deny_output(busy)
+            kind, label = browser_guard.classify(tool, inp)
+            if kind == "deny":
+                return browser_guard.deny_output(f"Blockiert: {label} ist im angemeldeten Browser nicht erlaubt.")
+            if kind != "ask":
+                return {}
+            detail = label + ("\n\nZuletzt eingegeben:\n" + "\n".join(typed) if typed else "")
+            decision = await self.ask_approval(tool, "Browser: Aktion im Namen des Nutzers", redact(detail))
+            if decision in ("once", "always"):
+                typed.clear()
+                return {}
+            return browser_guard.deny_output(
+                "The user did not approve this browser action. Don't retry it; ask them in the chat.")
+
+        return hook
 
     def make_scope_hook(self):
         """Refuse tool calls that reach into another project's folders (scope.py)."""
@@ -780,6 +814,9 @@ class ChannelRuntime:
                     HookMatcher(matcher="Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob",
                                 hooks=[self.make_scope_hook()]),
                     *guard.sdk_matchers(),
+                    *([HookMatcher(matcher=browser_guard.MATCHER, hooks=[self.make_browser_hook()],
+                                   timeout=APPROVAL_TIMEOUT + 60, on_failure="block")]
+                      if self.ch.browser_mcp else []),
                 ]},
                 disallowed_tools=DISALLOWED_TOOLS, model=model, resume=resume,
                 # Attached images live outside the cwd; let the agent read them

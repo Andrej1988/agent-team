@@ -364,8 +364,10 @@ def sdk_hooks() -> Optional[dict]:
 def cli_settings() -> Optional[str]:
     """--settings JSON for a `claude -p` run (always: the worktree check)."""
     cmd = f"{shlex.quote(sys.executable)} -m agent_team.guard"
+    from . import browser_guard  # the logged-in browser: no actions in the user's name unattended
     return json.dumps({"hooks": {"PreToolUse": [
-        {"matcher": MATCHER, "hooks": [{"type": "command", "command": cmd}]}]}})
+        {"matcher": MATCHER, "hooks": [{"type": "command", "command": cmd}]},
+        browser_guard.cli_settings_hook()]}})
 
 
 def main() -> None:

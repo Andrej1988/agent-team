@@ -24,6 +24,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 
+from . import browser_guard
+
 log = logging.getLogger("agent-team")
 
 router = APIRouter()
@@ -94,12 +96,20 @@ async def vnc_socket(ws: WebSocket, project: str) -> None:
             else:
                 await ws.send_text(data)
 
-    tasks = [asyncio.create_task(to_upstream()), asyncio.create_task(to_client())]
+    async def heartbeat() -> None:
+        # Input lock for the agent while the view is open (browser_guard.busy_reason).
+        while True:
+            browser_guard.set_viewing(project, True)
+            await asyncio.sleep(10)
+
+    tasks = [asyncio.create_task(to_upstream()), asyncio.create_task(to_client()),
+             asyncio.create_task(heartbeat())]
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
         for t in tasks:
             t.cancel()
+        browser_guard.set_viewing(project, False)
         await upstream.close()
         try:
             await ws.close()

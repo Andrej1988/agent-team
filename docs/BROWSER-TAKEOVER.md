@@ -1,4 +1,4 @@
-# Browser with takeover (steps 1-3 built)
+# Browser with takeover
 
 Goal: an agent can work in a real, **logged-in** browser (e.g. reply to a
 community thread after the user approved the text), and the user can **take
@@ -88,14 +88,26 @@ anything behind a login.
   "Browser" on channels with `browser_mcp`. The browser container accepts
   6080 only from the web app's view network.
 
+- Guard (`browser_guard.py`): tools that bypass checks or read
+  credentials are refused (page JS, Playwright code, network details);
+  actions in the user's name (submit-like clicks, Enter, type+submit,
+  uploads, accepting dialogs) show an approval card in the chat with the
+  text typed before — one approval, one action. The chat hook fails closed.
+  Unattended runs (`claude -p`, scouts) get the same check as a command hook
+  and are refused every such action. The click check reads the element
+  description the agent passes: a safety net next to the prompt rules.
+- Input lock: while the live view is open (heartbeat file under
+  `<data>/browser/<project>.viewing`), the chat agent may only look.
+- Inbox: an agent reply asking "Bitte übernimm den Browser" becomes a
+  "Browser" card with a "Browser übernehmen" button.
+- Scouts: `browser: shared` uses the persistent browser at
+  `WORKER_BROWSER_MCP` (read what needs a login; never act).
+
 ## Steps
 
 1. ✅ Browser container + compose + network/firewall test. Until the PWA
    view exists, publish 6080 on the host's loopback and use an SSH tunnel.
 2. ✅ Playwright MCP for one chat channel (`browser_mcp`).
-3. ✅ Web route + PWA live view (chat button). The agent asks in the chat
-   ("Bitte übernimm den Browser"), the user answers "fertig". Open: a
-   dedicated takeover card in the inbox and the input lock while the view
-   is open.
-4. Approval token guard for submit-like actions.
-5. Enable for scouts that need it.
+3. ✅ Web route + PWA live view (chat button, inbox card, input lock).
+4. ✅ Approval guard for actions in the user's name.
+5. ✅ Shared browser for scouts (`browser: shared`, read only).
