@@ -398,3 +398,11 @@ def test_prompt_shows_closed_tasks_and_every_scouts_proposals(tmp_path):
         {"id": 5, "status": "done", "title": "Uralt", "updated_at": (now - timedelta(days=200)).isoformat()}])
     p = scouts.build_prompt({}, "the app", [], scouts.all_proposed(tmp_path), "A", "P", closed=closed)
     assert "#4 [backlog] Geparkt" in p and "Uralt" not in p and "Mengen-Parser heilen" in p
+
+
+def test_report_body_strips_proposals_and_caps():
+    text = "## Entwürfe\nPost A\n\n# Proposals\n```json\n[]\n```"
+    assert scouts.report_body(text) == "## Entwürfe\nPost A"
+    long = scouts.report_body("x" * (scouts.REPORT_MAX_CHARS + 50) + "\n# Proposals\n[]")
+    assert long.endswith("(gekürzt)") and len(long) < scouts.REPORT_MAX_CHARS + 30
+    assert scouts.report_body("") == ""

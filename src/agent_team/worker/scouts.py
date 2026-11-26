@@ -16,6 +16,7 @@
         artifacts: .claude/skills/app-test/laeufe   # optional: where screenshots go (cwd-relative)
         prepare: watchdog-digest.sh  # optional: scouts/<file> builds an input file first
         always: true               # optional: run even when the pacer says wait (not when paused)
+        post_report: true          # optional: the message above the block goes to the channel as is
 
 and ``scouts/<id>.md`` is the assignment; ``scouts/_common.md`` (optional)
 holds rules every scout of the team gets. When a scout is due and the budget
@@ -99,6 +100,18 @@ def parse_proposals(text: str, limit: int) -> Optional[list[dict]]:
             "repos": [str(r) for r in (p.get("repos") or []) if isinstance(r, str)],
         })
     return out
+
+
+REPORT_MAX_CHARS = 12000
+
+
+def report_body(text: str) -> str:
+    """The run's message without the trailing ``# Proposals`` block — for
+    scouts whose output is the report itself (drafts, findings to read)."""
+    body = (text or "").rsplit("# Proposals", 1)[0].strip()
+    if len(body) > REPORT_MAX_CHARS:
+        body = body[:REPORT_MAX_CHARS].rstrip() + "\n\n… (gekürzt)"
+    return body
 
 
 def is_info(p: dict) -> bool:
@@ -326,6 +339,9 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
         ledger = ledger_text(finished)
     prompt = build_prompt(scout, label, open_tasks, all_proposed(control), assignment, persona, ledger,
                           decisions.prompt_section(control), closed=closed)
+    if scout.get("post_report"):
+        prompt += ("\n\n## Report\nEverything you write above the `# Proposals` block is posted "
+                   "to the user's chat as your report, unchanged — write it for them, not for a log.\n")
     if scout.get("prepare"):
         prepared = await run_prepare(scout, state, team_dir, control, cwd)
         prompt += (f"\n\n## Prepared input\nRead `{prepared}` first — built for this run "
@@ -382,6 +398,12 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
     log.info("[scout %s] done: %d proposal(s) -> tasks %s, %d info(s)", sid, len(created),
              [c[0] for c in created], len(infos))
     channel = scout.get("channel")
+    body = report_body(text) if scout.get("post_report") else ""
+    if body and channel:
+        try:
+            await asyncio.to_thread(_notify, api_base, channel, f"Bericht ({sid})", body, f"scout:{sid}")
+        except Exception as e:
+            log.warning("[scout %s] channel notify failed: %s", sid, e)
     if infos and channel:
         text = "\n\n".join(f"{p['title']}\n{p['details'][:600]}" for p in infos)
         try:
@@ -406,7 +428,7 @@ async def run_scout(scout: dict, team_dir: Path, control: Path, label: str, cwd:
             await asyncio.to_thread(_notify, api_base, channel, f"Erneut gemeldet ({sid})", text, f"scout:{sid}")
         except Exception as e:
             log.warning("[scout %s] channel notify failed: %s", sid, e)
-    if not created and not infos and not repeats and channel:
+    if not created and not infos and not repeats and not body and channel:
         # Each role has its own chat now (User 2026-11-01): a run that found
         # nothing says so, so the chat shows what the role has been doing.
         try:
