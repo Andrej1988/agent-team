@@ -1,4 +1,4 @@
-# Browser with takeover (steps 1-2 built)
+# Browser with takeover (steps 1-3 built)
 
 Goal: an agent can work in a real, **logged-in** browser (e.g. reply to a
 community thread after the user approved the text), and the user can **take
@@ -82,11 +82,20 @@ anything behind a login.
   channel the tools `mcp__browser__*` plus prompt rules (takeover for
   logins/captchas, explicit approval for every outward action).
 
+- Web app: `AT_BROWSER_VIEWS` (`{"<project>": "http://<browser>:6080"}`)
+  enables `/browser/<project>/…` (noVNC files + WebSocket, user only — the
+  socket route applies the access rules itself) and the chat button
+  "Browser" on channels with `browser_mcp`. The browser container accepts
+  6080 only from the web app's view network.
+
 ## Steps
 
 1. ✅ Browser container + compose + network/firewall test. Until the PWA
    view exists, publish 6080 on the host's loopback and use an SSH tunnel.
 2. ✅ Playwright MCP for one chat channel (`browser_mcp`).
-3. Web route + PWA live view + takeover message/button + input lock.
+3. ✅ Web route + PWA live view (chat button). The agent asks in the chat
+   ("Bitte übernimm den Browser"), the user answers "fertig". Open: a
+   dedicated takeover card in the inbox and the input lock while the view
+   is open.
 4. Approval token guard for submit-like actions.
 5. Enable for scouts that need it.
