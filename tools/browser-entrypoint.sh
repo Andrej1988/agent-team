@@ -48,6 +48,7 @@ websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 &
 
 flags=(--user-data-dir=/profile --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
        --no-first-run --no-default-browser-check --disable-dev-shm-usage --password-store=basic
+       --hide-crash-restore-bubble
        --lang=de-DE --window-position=0,0 "--window-size=${screen/x/,}" --start-maximized)
 [ "${AT_BROWSER_NO_SANDBOX:-0}" = 1 ] && flags+=(--no-sandbox)
 # Chromium closed in the live view = start it again (same profile).
