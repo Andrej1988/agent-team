@@ -59,6 +59,9 @@ class Channel:
     # Own chat the user opened for a repo (longer-running work), see
     # register_custom_channel.
     custom: bool = False
+    # Persistent, logged-in browser (Playwright MCP over HTTP, e.g.
+    # "http://agent-team-browser-myproject:8931/mcp"); docs/BROWSER-TAKEOVER.md.
+    browser_mcp: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +144,7 @@ def _channels(pid: str, chat: dict) -> tuple[Channel, ...]:
             service=bool(merged.get("service")),
             lead=bool(merged.get("lead")),
             persona=os.path.expanduser(merged["persona"]) if merged.get("persona") else None,
+            browser_mcp=str(merged["browser_mcp"]) if merged.get("browser_mcp") else None,
         ))
     return tuple(out)
 

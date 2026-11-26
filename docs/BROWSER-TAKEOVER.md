@@ -1,4 +1,4 @@
-# Browser with takeover (design, not built yet)
+# Browser with takeover (steps 1-2 built)
 
 Goal: an agent can work in a real, **logged-in** browser (e.g. reply to a
 community thread after the user approved the text), and the user can **take
@@ -63,11 +63,30 @@ anything behind a login.
 - Screenshots the agent takes go to the task/chat artifacts, not to public
   places.
 
+## Built so far
+
+- `Dockerfile.browser` + `tools/browser-entrypoint.sh`: Xvfb, Chromium with
+  the profile in `/profile`, x11vnc + noVNC on 6080, Playwright MCP over
+  HTTP on 8931 (connected to Chromium on loopback, so CDP itself is never
+  exposed). Env: `AT_BROWSER_MCP_FROM`, `AT_BROWSER_VIEW_FROM` (CIDRs
+  allowed in), `AT_BROWSER_MCP_HOSTS` (Host header check of the MCP
+  server), `AT_BROWSER_NO_SANDBOX`.
+- The entrypoint sets the container's own iptables (needs `NET_ADMIN`,
+  `SETUID`, `SETGID`, `CHOWN` at start; everything runs as uid 1000 with no
+  capabilities afterwards): out only to public addresses, in only the
+  configured ports/subnets. Disable IPv6 via sysctl.
+- Chromium's sandbox needs unprivileged user namespaces, which hosts with
+  AppArmor userns restrictions (and Docker's default seccomp profile) do not
+  allow — then set `AT_BROWSER_NO_SANDBOX=1`; isolation is the container.
+- Chat channel option `browser_mcp: http://<browser>:8931/mcp` gives that
+  channel the tools `mcp__browser__*` plus prompt rules (takeover for
+  logins/captchas, explicit approval for every outward action).
+
 ## Steps
 
-1. Browser container + compose + network/firewall test (no PWA yet; the
-   user can reach noVNC through an SSH tunnel to verify login persistence).
-2. Playwright MCP over CDP for one chat channel (`browser: shared`).
+1. ✅ Browser container + compose + network/firewall test. Until the PWA
+   view exists, publish 6080 on the host's loopback and use an SSH tunnel.
+2. ✅ Playwright MCP for one chat channel (`browser_mcp`).
 3. Web route + PWA live view + takeover message/button + input lock.
 4. Approval token guard for submit-like actions.
 5. Enable for scouts that need it.

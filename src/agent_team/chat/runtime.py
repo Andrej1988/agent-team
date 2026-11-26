@@ -142,6 +142,29 @@ if os.environ.get("AT_LOCAL") == "1":
 WEB_INTERNAL_URL = os.environ.get("AT_WEB_INTERNAL_URL", "http://agent-team-web:8000").rstrip("/")
 
 
+BROWSER_NOTE = """
+
+## Browser (persistent, logged in)
+You have a real Chromium with a persistent profile (tools `mcp__browser__*`):
+logins and cookies stay between turns and restarts. Rules:
+- Login pages, passwords, 2FA codes, captchas, "are you a robot" checks: STOP
+  and ask the user to take over the live view ("Bitte übernimm den Browser:
+  <what and where>"), then wait for their reply. Never type a password or
+  code, never try to get around a captcha.
+- Posting, commenting, voting, sending messages, signing up, accepting terms:
+  only after the user approved exactly that text and place in this chat, in
+  their own words. Show the final text first. One approval = one action.
+- Do not read or copy cookies, tokens or saved passwords.
+"""
+
+
+def browser_options(ch) -> dict:
+    """SDK options for a channel with a persistent browser (or none)."""
+    if not getattr(ch, "browser_mcp", None):
+        return {}
+    return {"mcp_servers": {"browser": {"type": "http", "url": ch.browser_mcp}}}
+
+
 LEAD_RULES = """\
 ## You are the team lead in this channel (Tasks v2)
 
@@ -762,9 +785,11 @@ class ChannelRuntime:
                 # Attached images live outside the cwd; let the agent read them
                 # without an approval prompt.
                 add_dirs=[str(channel_dir(self.ch.id) / "inbox")],
-                system_prompt={"type": "preset", "preset": "claude_code", "append": self.handoff_append() + QUIET_NOTE + scope.prompt_note(self.ch.project)},
+                system_prompt={"type": "preset", "preset": "claude_code", "append": self.handoff_append() + QUIET_NOTE + scope.prompt_note(self.ch.project)
+                               + (BROWSER_NOTE if self.ch.browser_mcp else "")},
                 env={**git_identity.chat(self.ch.id), **guard.docker_env(self.ch.project)},
                 max_buffer_size=SDK_MAX_BUFFER_BYTES,
+                **browser_options(self.ch),
             )
 
         resume_id = self.state.session_ids.get("claude")
