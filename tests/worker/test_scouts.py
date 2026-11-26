@@ -406,3 +406,33 @@ def test_report_body_strips_proposals_and_caps():
     long = scouts.report_body("x" * (scouts.REPORT_MAX_CHARS + 50) + "\n# Proposals\n[]")
     assert long.endswith("(gekürzt)") and len(long) < scouts.REPORT_MAX_CHARS + 30
     assert scouts.report_body("") == ""
+
+
+def test_lead_takes_from_the_backlog_when_ideas_run_out(tmp_path, monkeypatch):
+    import asyncio
+
+    from agent_team.worker import lead
+    team = tmp_path / "team"
+    (team / "scouts").mkdir(parents=True)
+    monkeypatch.setattr(lead.pipeline, "load_role", lambda r: type("R", (), {"body": "LEAD"})())
+    backlog = [{"id": 50, "status": "backlog", "mode": "simple", "prio": 2, "title": "Später A",
+                "details": "x (Vorschlag des Scouts tests)"},
+               {"id": 51, "status": "backlog", "mode": "simple", "prio": 3, "title": "Veraltet",
+                "details": "y (Vorschlag des Scouts tests)"}]
+    monkeypatch.setattr(lead.tasks_api, "list_tasks", lambda *a: backlog if a == ("backlog",) else [])
+    monkeypatch.setattr(lead, "_budget", lambda base: {})
+    posts = []
+    monkeypatch.setattr(lead, "_post", lambda base, path, body: posts.append((path, body)))
+    monkeypatch.setattr(lead.scouts, "_notify", lambda *a: None)
+    out = ('# Lead\n```json\n{"recommend": [{"id": 50, "note": "jetzt dran"}],'
+           ' "park": [{"id": 51, "reason": "erledigt sich", "close": true}], "summary": "ok"}\n```')
+    seen = {}
+
+    async def fake_agent(prompt, *a, **k):
+        seen["prompt"] = prompt
+        return out, {}
+    monkeypatch.setattr(lead.scouts, "_run_agent", fake_agent)
+    asyncio.run(lead.run_lead({"id": "lead", "channel": "c"}, team, tmp_path / "ctl", "x", str(tmp_path), "http://api"))
+    assert "## Backlog" in seen["prompt"] and "#50 [prio 2, Scout] Später A" in seen["prompt"]
+    assert posts[:3] == [("/api/tasks/50/restore", {}), ("/api/tasks/50/propose", {"note": "jetzt dran"}),
+                         ("/api/tasks/51/close", {"reason": "erledigt sich"})]

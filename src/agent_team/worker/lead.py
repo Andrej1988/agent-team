@@ -13,11 +13,13 @@
 
 Runs on the scout schedule (one read-only headless session, budget pacer as
 for scouts). It sees the ideas (``new`` / ``refined``), the running
-pipelines, recent results and the budget, and answers with a ``# Lead`` JSON
+pipelines, the parked backlog, recent results and the budget, and answers with a ``# Lead`` JSON
 block. The worker then
 
 - proposes the recommended tasks (``POST /propose`` — status "Zur Freigabe",
-  a card with "Freigeben & starten" in the lead channel),
+  a card with "Freigeben & starten" in the lead channel); a recommended
+  backlog task is restored first (``/restore``), so an empty idea list does
+  not leave the team idle while the backlog still holds work,
 - tidies agent-made ideas: merge (``/merge``, closes it), done (``/done``),
   close — will not be done (``/close``), or park for later (``/park``,
   backlog); the user's own tasks get a card with that action instead,
@@ -56,6 +58,7 @@ FOLLOW_MARK = "(Folge-Task von #"
 FOLLOW_DAYS = 14
 WATCHDOG_MAX = 120  # newest open alerts shown per run
 ACTIVE = ("planning", "running", "plan_ready", "awaiting_input", "blocked")
+BACKLOG_MAX = 60    # parked tasks shown per run (by prio, oldest first)
 
 
 def from_scout(task: dict) -> bool:
@@ -128,6 +131,13 @@ def _line(t: dict, with_details: bool = False) -> str:
     return f"{head}\n  {body}" if body else head
 
 
+def _backlog_line(t: dict) -> str:
+    origin = "Scout" if from_scout(t) else "User"
+    body = " ".join(((t.get("lead_note") or t.get("details") or "").split()))[:200]
+    head = f"- #{t['id']} [prio {t['prio']}, {origin}] {t['title']}"
+    return f"{head}\n  {body}" if body else head
+
+
 def _alert_line(a: dict) -> str:
     text = " ".join(str(a.get("text") or "").split())[:300]
     mark = " (Prüf-Chat offen)" if a.get("checked") else ""
@@ -136,7 +146,8 @@ def _alert_line(a: dict) -> str:
 
 def build_prompt(scout: dict, label: str, ideas: list[dict], active: list[dict], ledger: str,
                  budget: dict, assignment: str, persona: str, finished: Optional[list[dict]] = None,
-                 decided: str = "", alerts: Optional[list[dict]] = None) -> str:
+                 decided: str = "", alerts: Optional[list[dict]] = None,
+                 backlog: Optional[list[dict]] = None) -> str:
     limit = int(scout.get("max_proposals") or 3)
     waiting = sum(1 for t in ideas if t.get("proposed_at"))
     return f"""You are the team lead for {label}. You run unattended once a day;
@@ -150,6 +161,9 @@ and the tasks below as needed.
 
 ## Ideas (new / refined) — your backlog
 {chr(10).join(_line(t, True) for t in ideas) or "(none)"}
+
+## Backlog — parked earlier "for later" (ids in the same space)
+{chr(10).join(_backlog_line(t) for t in (backlog or [])) or "(none)"}
 
 ## Running pipelines
 {chr(10).join(_line(t) for t in active) or "(none)"}
@@ -169,7 +183,12 @@ and the tasks below as needed.
 ## Output contract
 Recommend at most {limit} new task(s) to start ({waiting} earlier recommendation(s)
 still wait for the user's click — do not repeat them) — the ones with the best
-value for the budget left; zero is fine. For each, a German note for the phone: why now, rough plan,
+value for the budget left; zero is fine. When the ideas do not fill these
+slots with worthwhile work, take the next best tasks from the Backlog
+(re-check that they still make sense against the current code) — the
+backlog is "later", and later has come once the ideas are used up. Backlog
+entries that are obsolete or already done may go into "park" with
+"close": true or "done": true (other park outcomes do not apply to them). For each, a German note for the phone: why now, rough plan,
 risk, effort. For the just-finished tasks: create an idea for each follow-up
 they explicitly name (a "Folgetask", an open point the review left, an
 inventory of remaining work) unless it already exists as an idea — check
@@ -241,6 +260,13 @@ async def run_lead(scout: dict, team_dir: Path, control: Path, label: str, cwd: 
     # The default list hides done tasks — fetch them for results + follow-ups.
     done = [t for t in await asyncio.to_thread(tasks_api.list_tasks, "done") if t.get("status") == "done"]
     ideas = sorted((t for t in tasks if t["status"] in ("new", "refined")), key=lambda t: (t["prio"], t["id"]))
+    try:
+        backlog = sorted((t for t in await asyncio.to_thread(tasks_api.list_tasks, "backlog")
+                          if t.get("status") == "backlog" and t.get("mode") != "pipeline"),
+                         key=lambda t: (t["prio"], t["id"]))[:BACKLOG_MAX]
+    except Exception as e:  # noqa: BLE001
+        log.warning("[lead %s] backlog unavailable: %s", sid, e)
+        backlog = []
     active = [t for t in tasks if t["status"] in ACTIVE]
     finished = done + [t for t in tasks if t["status"] == "blocked"]
     ledger = scouts.ledger_text(finished, limit=30)
@@ -258,8 +284,8 @@ async def run_lead(scout: dict, team_dir: Path, control: Path, label: str, cwd: 
     alerts = [{**a, "id": a["seq"], "key": f"{a['channel']}:{a['seq']}"} for a in raw_alerts
               if f"{a['channel']}:{a['seq']}" not in handled][-WATCHDOG_MAX:]
     prompt = build_prompt(scout, label, ideas, active, ledger, budget, assignment, persona, just_done,
-                          decisions.prompt_section(control), alerts)
-    log.info("[lead %s] starting (%d ideas, %d running)", sid, len(ideas), len(active))
+                          decisions.prompt_section(control), alerts, backlog)
+    log.info("[lead %s] starting (%d ideas, %d in backlog, %d running)", sid, len(ideas), len(backlog), len(active))
     text, tools = await scouts._run_agent(prompt, scout.get("model"), cwd, None)
     (control / "scouts").mkdir(parents=True, exist_ok=True)
     (control / "scouts" / f"{sid}.last.md").write_text(text or "", encoding="utf-8")
@@ -271,19 +297,25 @@ async def run_lead(scout: dict, team_dir: Path, control: Path, label: str, cwd: 
         return
 
     by_id = {t["id"]: t for t in ideas}
+    parked_ids = {t["id"]: t for t in backlog}
     limit = int(scout.get("max_proposals") or 3)  # new per run; earlier ones may still wait
     proposed, parked, closed, ticked, kept = [], [], [], [], []
     for r in out["recommend"][:limit]:
-        t = by_id.get(r["id"])
+        t = by_id.get(r["id"]) or parked_ids.get(r["id"])
         if t is None or t.get("proposed_at"):
             continue
         try:
+            if t["id"] in parked_ids:
+                # Back from "later": an idea again, then proposed as usual.
+                await asyncio.to_thread(_post, api_base, f"/api/tasks/{t['id']}/restore", {})
             await asyncio.to_thread(_post, api_base, f"/api/tasks/{t['id']}/propose", {"note": r["note"]})
             proposed.append(t)
         except Exception as e:  # noqa: BLE001
             log.warning("[lead %s] propose #%s failed: %s", sid, t["id"], e)
     for r in out["park"]:
         t = by_id.get(r["id"])
+        if t is None and r["id"] in parked_ids and (r["close"] or r["done"]) and r["into"] is None:
+            t = parked_ids[r["id"]]   # tidy the backlog: only close / done
         if t is None:
             continue
         if r["into"] is not None and r["into"] not in by_id and r["into"] not in {x["id"] for x in tasks}:

@@ -112,6 +112,10 @@ bearbeiten, Stufe wiederholen oder überspringen.
     Plan, Risiko, Aufwand
 
   Die Tasks gehen auf „Zur Freigabe“, dazu kommt eine Sammel-Push.
+
+  Reichen die Ideen nicht, nimmt der Lead die nächsten Tasks aus dem
+  Backlog: Sie werden wiederhergestellt und genauso vorgeschlagen. Überholte
+  Backlog-Einträge darf er schließen oder als erledigt abhaken.
 - **Aufräumen**, jeweils mit Begründung:
   - zusammenlegen (→ Geschlossen)
   - schon erledigt (→ Erledigt)
