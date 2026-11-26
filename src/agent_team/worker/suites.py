@@ -13,7 +13,8 @@ team.yaml::
       channel: myproject-tests      # where a red suite is reported
 
 ``{repo}`` is the repo's absolute host path (shell-quoted), ``{name}`` a
-container name the worker may kill on a timeout, ``{team}`` the team folder
+container name prefix the worker kills on a timeout (``{name}`` and
+``{name}-…``), ``{team}`` the team folder
 (e.g. ``bash {team}/run-suite.sh {repo} {name} backend:latest``). The whole suite, never a
 subset: a test that is not run cannot fail.
 
@@ -125,6 +126,18 @@ def parse(output: str) -> tuple[str, list[str]]:
     return summary, failed[:MAX_FAILED]
 
 
+def _kill(name: str) -> None:
+    """Stop the suite's containers: ``{name}`` and any ``{name}-…`` (a command
+    may run several, e.g. one per sub-folder with its own image)."""
+    try:
+        r = subprocess.run(["docker", "ps", "-q", "--filter", f"name=^/{name}"],
+                           capture_output=True, text=True, timeout=60)
+        ids = r.stdout.split() if r.returncode == 0 else []
+        subprocess.run(["docker", "kill", *(ids or [name])], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def run(suite: Suite, path: Path, name: str, env: Optional[dict] = None) -> Result:
     """Run one suite; never raises."""
     head = ""
@@ -140,7 +153,7 @@ def run(suite: Suite, path: Path, name: str, env: Optional[dict] = None) -> Resu
         out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
         code: Optional[int] = r.returncode
     except subprocess.TimeoutExpired as e:
-        subprocess.run(["docker", "kill", name], capture_output=True, timeout=60)
+        _kill(name)
         raw = e.stdout or b""
         out = (raw.decode(errors="replace") if isinstance(raw, bytes) else raw)
         out += f"\nZeitüberschreitung nach {suite.timeout_s // 60} min — abgebrochen."
