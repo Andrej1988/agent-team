@@ -296,6 +296,7 @@ export interface ChatChannel {
   task?: { status: TaskStatus; working: boolean } | null
   check_of?: string | null  // check chat: "<source channel>:<alert seq>"
   custom?: boolean          // own chat the user opened for a repo
+  browser?: string | null   // live view link of the project's persistent browser
   archived?: boolean        // hidden from the list, transcript kept
   last_seq: number
   read_seq: number

@@ -17,7 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from .. import projects
+from .. import browser_view, projects
 from . import log as chatlog
 
 CHAT_URL = os.environ.get("AT_CHAT_URL", "http://agent-team-chat:8001").rstrip("/")
@@ -79,6 +79,7 @@ def channel_summary(ch: projects.Channel) -> dict:
     return {
         "id": ch.id, "project": ch.project, "label": ch.label, "cwd": ch.cwd, "lead": ch.lead, "task_id": ch.task_id,
         "check_of": ch.check_of, "custom": ch.custom,
+        "browser": browser_view.view_url(ch.project) if ch.browser_mcp and ch.project in browser_view.views() else None,
         "archived": chatlog.archived(ch.id),
         "last_seq": last_seq, "read_seq": read, "unread": unread, "last_ts": last_ts,
         "preview": preview, "open_requests": len(chatlog.open_requests(ch.id)),

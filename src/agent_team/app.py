@@ -38,7 +38,7 @@ from fastapi.staticfiles import StaticFiles
 
 from contextlib import asynccontextmanager
 
-from . import budget, deploy, inbox, projects, push
+from . import browser_view, budget, deploy, inbox, projects, push
 from .chat import web as chat_web
 from .chat import service as chat_service
 from .tasks import db as tasks_db
@@ -334,6 +334,23 @@ app.include_router(chat_web.router)
 app.include_router(chat_service.router)
 app.include_router(deploy.router)
 app.include_router(system_router.router)
+
+
+def _ws_user(ws) -> str | None:
+    """The access gate's rules for a WebSocket (HTTP middleware does not see
+    them): never internal or notify clients; else the local user or a valid
+    Access identity."""
+    if _internal_client(ws) or _notify_client(ws):
+        return None
+    if LOCAL:
+        return "local" if _loopback(ws) else None
+    if _jwks is None:
+        return None
+    return access_identity(ws)
+
+
+browser_view.ws_user = _ws_user
+app.include_router(browser_view.router)
 
 
 @app.get("/api/projects")

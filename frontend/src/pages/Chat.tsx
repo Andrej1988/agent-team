@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Archive, ArrowLeft, Check, ChevronDown, ChevronRight, CircleHelp, Copy, ImagePlus, Paperclip, Search, Loader2, Quote, RotateCcw, Send,
   Settings2, ShieldAlert, Square, Trash2, TriangleAlert, Wrench, X,
+  Globe,
 } from 'lucide-react'
 import TaskStatusBar from '../components/tasks/TaskStatusBar'
 import { CARD_TASK, cardOutdated, mentionedActions, replanHint, taskMovedOn } from '../components/tasks/cards'
@@ -189,7 +190,7 @@ const DUTY_LABEL: Record<string, string> = {
   refactor: 'Refactor', security: 'Sicherheit', 'prospekt-stichprobe': 'Prospekt-Stichprobe',
   'weekly-report': 'Wochenbericht',
   backtest: 'Backtest-Audit', watchdog: 'Auswertung', 'product-owner': 'Produkt-Durchsicht',
-  'qa-tester': 'App-Test', legal: 'Rechtsprüfung', review: 'Review',
+  'qa-tester': 'App-Test', legal: 'Rechtsprüfung', review: 'Review', marketing: 'Marketing-Runde',
 }
 
 // Clipboard API needs a secure context; the textarea trick covers the rest.
@@ -980,6 +981,14 @@ export default function Chat() {
               <RotateCcw size={12} /> {requested[sid] ? `${DUTY_LABEL[sid] ?? sid} läuft gleich …` : `${DUTY_LABEL[sid] ?? sid} jetzt`}
             </button>
           ))}
+          {info?.browser && (
+            // Live view of the project's persistent browser: log in, enter a
+            // code or solve a captcha, then tell the agent "fertig".
+            <a href={info.browser} target="_blank" rel="noopener" title="Browser übernehmen (Login, Code, Captcha)"
+              className="flex items-center gap-1 whitespace-nowrap rounded border border-emerald-700 px-2 py-1 text-xs text-emerald-200 hover:text-white">
+              <Globe size={12} /> Browser
+            </a>
+          )}
           {(info?.task_id != null || info?.check_of || info?.custom) && (
             // Finished task / check chat: hide it from the list, keep the transcript.
             <button onClick={() => toggleArchive(!info.archived)}
