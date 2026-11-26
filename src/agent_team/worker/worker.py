@@ -23,6 +23,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 import urllib.request
 from datetime import datetime, timedelta
@@ -37,7 +38,7 @@ from .. import log_redaction
 from .. import budget, git_identity, guard
 from ..agent_notes import QUIET_NOTE
 from ..chat import claude_login
-from . import evidence, monitor_control, pipeline, scouts, task_containers, workspace
+from . import evidence, monitor_control, pipeline, scouts, suites, task_containers, test_gate, workspace
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -313,6 +314,9 @@ CONFIRM_ROLES: frozenset[str] = frozenset(str(r) for r in TEAM.get("confirm_role
 HANDS_OFF_ALLOW: tuple[str, ...] = tuple(str(a) for a in TEAM.get("hands_off_allow") or [])
 # Task worktrees (workspace.py): None = off, stages run in the live checkout.
 WS = workspace.layout(monitor_control.CONTROL_DIR)
+# Test suites the worker runs itself (suites.py): task gates + daily live run.
+SUITES = suites.load(TEAM, TEAM_DIR)
+LIVE_SUITES = suites.live_config(TEAM)
 _REPO_LIST = ", ".join(f"`{r}`" for r in sorted(VALID_REPOS)) or "(none configured)"
 _REPO_EXAMPLE = ", ".join(sorted(VALID_REPOS)[:2]) or "repo-a, repo-b"
 
@@ -1173,7 +1177,10 @@ async def stage_one(task: dict, stage: dict) -> None:
     def _complete(t: int, section: str):
         # Gate numbers from the raw backtest files, computed here by code
         # (the backend only uses them for roles with metric_files).
-        return tasks_api.stage_complete(t, seq, attempt, section, evidence.collect(Path(cwd), tid))
+        ev = evidence.collect(Path(cwd), tid)
+        if isolated and role.kind == pipeline.KIND_IMPLEMENT and SUITES:
+            ev = {**ev, **_stage_suites(tid, seq, kind, role, stage, env)}
+        return tasks_api.stage_complete(t, seq, attempt, section, ev)
 
     def _fail(t: int, err: str):
         return tasks_api.stage_fail(t, seq, attempt, err)
@@ -1243,6 +1250,19 @@ async def stage_one(task: dict, stage: dict) -> None:
                                     "\n".join(applied) + "\n\nDeployt wird jetzt aus diesem Stand.")
     if isolated:
         prompt += "\n\n" + workspace.prompt_section(WS, tid)
+        if role.kind == pipeline.KIND_IMPLEMENT and SUITES:
+            await _safe_append(tid, kind, _event("text", text="🧪 Prüfe den Ausgangsstand (Test-Suiten) …"))
+            action, text = await asyncio.to_thread(test_gate.baseline, WS, tid, task, SUITES, answer, env)
+            if action != "go":
+                await _safe_append(tid, kind, _event("text", text="🧪 Ausgangsstand rot — Rückfrage an dich."
+                                                     if action == "ask" else "🧪 Angehalten (Ausgangsstand rot)."))
+                try:
+                    await asyncio.to_thread(tasks_api.stage_complete, tid, seq, attempt, text, {})
+                except Exception:  # noqa: BLE001
+                    log.exception("[task %s] %s: baseline result not saved", tid, kind)
+                return
+            if text:
+                prompt += "\n\n" + text
     elif applied is not None:
         prompt += "\n\n" + pipeline.RELEASE_APPLIED_NOTE.format(branch=workspace.branch(tid))
 
@@ -1310,17 +1330,44 @@ def _uses_workspace(task: dict, stages: list[dict]) -> bool:
     return not any(s.get("status") in ("done", "failed", "skipped", "awaiting_input") for s in stages)
 
 
+def _stage_suites(tid: int, seq: int, kind: str, role, stage: dict, env: dict) -> dict:
+    """End of an implement stage: commit, run the suites of the changed repos
+    (evidence for the backend's gate, ``tasks/db.complete_stage``)."""
+    goal = (stage.get("goal") or "").strip()[:1500]
+    try:
+        workspace.commit(WS, tid, f"Task #{tid} Stufe {seq} · {role.label}\n\n{goal}".strip(), env)
+        tasks_api.append_event(tid, kind, _event("text", text="🧪 Test-Suiten der geänderten Repos laufen …"))
+        ev = test_gate.end_gate(WS, tid, SUITES, env)
+    except Exception as e:  # noqa: BLE001 — a gate that cannot run must not pass
+        log.exception("[task %s] %s: test suites failed to run", tid, kind)
+        ev = {"ok": False, "repos": {"(worker)": {"ok": False, "summary": f"Suiten nicht ausführbar: {e}"}},
+              "report": f"Suiten nicht ausführbar: {e}"}
+    if ev is None:
+        return {}
+    try:
+        tasks_api.append_event(tid, kind, _event("text", text="🧪 " + ev["report"][:3000]))
+    except Exception:  # noqa: BLE001
+        pass
+    return {"suites": ev}
+
+
 def _apply_branch(tid: int, identity: dict) -> list[str]:
     if not WS.ws(tid).exists():
         return []
+    check = None
+    if SUITES:
+        check = test_gate.apply_check(
+            WS, tid, SUITES, identity,
+            on_run=lambda repos: _notify_task(tid, "🧪 Tests vor dem Übernehmen",
+                                              f"Ganze Suiten nach dem Rebase: {repos} …"))
     if workspace.APPLY_MODE == "pr":
         task = tasks_api.get_task(tid) or {}
         title = f"{task.get('title') or f'Task #{tid}'}"
         body = (f"{(task.get('details') or '').strip()[:4000]}\n\n"
                 f"_Entwurf von agent-team (Task #{tid}), Branch `{workspace.branch(tid)}`._").strip()
-        out = workspace.publish_pr(WS, tid, title, body, identity)
+        out = workspace.publish_pr(WS, tid, title, body, identity, check=check)
     else:
-        out = workspace.apply(WS, tid, identity)
+        out = workspace.apply(WS, tid, identity, check=check)
     workspace.write_state(WS, tid, {"applied": out, "applied_at": _now_iso()} if out else None)
     return out
 
@@ -1336,6 +1383,46 @@ def _notify_task(tid: int, title: str, text: str, buttons: list | None = None) -
         urllib.request.urlopen(req, timeout=20).close()
     except Exception as e:  # noqa: BLE001
         log.warning("[task %s] chat notice failed: %s", tid, e)
+
+
+_applying: set[int] = set()
+
+
+def _handle_apply(tid: int) -> None:
+    try:
+        out = _apply_branch(tid, git_identity.stage(PROJECT_ID, "lead"))
+        if out and workspace.APPLY_MODE == "pr":
+            _notify_task(tid, "⇢ Draft-PR bereit", "\n".join(out) + "\n\nGepusht, PR als Entwurf. "
+                         "Review und Merge machst du auf GitHub; danach räumt der Worker den Arbeitsordner auf.",
+                         [[{"label": "Abschließen – Chat archivieren", "data": f"archive:{tid}"}]])
+        elif out:
+            _notify_task(tid, "⇢ Übernommen", "\n".join(out) + "\n\nLokal gemergt — noch nicht deployt, kein Push.",
+                         [[{"label": "Deployen lassen (falls nötig)", "data": f"deploy:{tid}"}],
+                          [{"label": "Abschließen – Chat archivieren", "data": f"archive:{tid}"}]])
+        else:
+            _notify_task(tid, "Nichts zu übernehmen",
+                         f"Branch {workspace.branch(tid)} hat nichts, was nicht schon im Live-Ordner ist.",
+                         [[{"label": "Abschließen – Chat archivieren", "data": f"archive:{tid}"}]])
+    except (workspace.GitError, OSError) as e:
+        log.warning("[task %s] apply failed: %s", tid, e)
+        if "Test-Suite rot" in str(e):
+            _notify_task(tid, "✗ Nicht übernommen: Tests rot",
+                         f"{e}\n\nGeprüft wurde genau der Stand, der übernommen würde (nach dem Rebase auf den "
+                         "Live-Branch). Der Live-Ordner ist unverändert. Der Lead kann die Reparatur anstoßen; "
+                         "danach erneut übernehmen.",
+                         [[{"label": "Lead soll das klären", "data": f"askfix:{tid}"}],
+                          [{"label": "Erneut übernehmen", "data": f"apply:{tid}"}]])
+            return
+        _notify_task(tid, "✗ Übernehmen fehlgeschlagen",
+                     f"{e}\n\nDer Live-Ordner ist unverändert (außer den oben als übernommen genannten Repos). "
+                     "Der Lead kann prüfen, woran es liegt (lokale Änderungen im Live-Ordner, Konflikt) und "
+                     "was zu tun ist. Ist das Hindernis weg: erneut übernehmen.",
+                     [[{"label": "Lead soll das klären", "data": f"askfix:{tid}"}],
+                      [{"label": "Erneut übernehmen", "data": f"apply:{tid}"}]])
+    except Exception:  # noqa: BLE001
+        log.exception("[task %s] apply crashed", tid)
+    finally:
+        _applying.discard(tid)
 
 
 _ws_sweep_last = 0.0
@@ -1354,36 +1441,17 @@ def _workspace_tick() -> None:
         except ValueError:
             f.unlink(missing_ok=True)
             continue
-        if tid in _in_flight_stage_tasks:
-            continue  # a stage is still writing; next poll
+        if tid in _in_flight_stage_tasks or tid in _applying:
+            continue  # a stage is still writing / already applying; next poll
         f.unlink(missing_ok=True)
-        try:
-            out = _apply_branch(tid, git_identity.stage(PROJECT_ID, "lead"))
-            if out and workspace.APPLY_MODE == "pr":
-                _notify_task(tid, "⇢ Draft-PR bereit", "\n".join(out) + "\n\nGepusht, PR als Entwurf. "
-                             "Review und Merge machst du auf GitHub; danach räumt der Worker den Arbeitsordner auf.",
-                             [[{"label": "Abschließen – Chat archivieren", "data": f"archive:{tid}"}]])
-            elif out:
-                _notify_task(tid, "⇢ Übernommen", "\n".join(out) + "\n\nLokal gemergt — noch nicht deployt, kein Push.",
-                             [[{"label": "Deployen lassen (falls nötig)", "data": f"deploy:{tid}"}],
-                              [{"label": "Abschließen – Chat archivieren", "data": f"archive:{tid}"}]])
-            else:
-                _notify_task(tid, "Nichts zu übernehmen",
-                             f"Branch {workspace.branch(tid)} hat nichts, was nicht schon im Live-Ordner ist.",
-                             [[{"label": "Abschließen – Chat archivieren", "data": f"archive:{tid}"}]])
-        except (workspace.GitError, OSError) as e:
-            log.warning("[task %s] apply failed: %s", tid, e)
-            _notify_task(tid, "✗ Übernehmen fehlgeschlagen",
-                         f"{e}\n\nDer Live-Ordner ist unverändert (außer den oben als übernommen genannten Repos). "
-                         "Der Lead kann prüfen, woran es liegt (lokale Änderungen im Live-Ordner, Konflikt) und "
-                         "was zu tun ist. Ist das Hindernis weg: erneut übernehmen.",
-                         [[{"label": "Lead soll das klären", "data": f"askfix:{tid}"}],
-                          [{"label": "Erneut übernehmen", "data": f"apply:{tid}"}]])
+        # In its own thread: the test gate may run whole suites for minutes.
+        _applying.add(tid)
+        threading.Thread(target=_handle_apply, args=(tid,), daemon=True, name=f"apply-{tid}").start()
     if time.monotonic() - _ws_sweep_last < 600:
         return
     _ws_sweep_last = time.monotonic()
     for tid in workspace.task_ids(WS):
-        if tid in _in_flight_stage_tasks or tid in _in_flight_plans:
+        if tid in _in_flight_stage_tasks or tid in _in_flight_plans or tid in _applying:
             continue
         try:
             task = tasks_api.get_task(tid)
@@ -1405,6 +1473,47 @@ def _workspace_tick() -> None:
                 task_containers.remove(tid)
         except Exception as e:  # noqa: BLE001
             log.warning("[task %s] workspace sweep: %s", tid, e)
+
+
+_live_suites_running = False
+
+
+def _run_live_suites(before: dict) -> None:
+    """Daily: the whole suites on the live checkout; red goes to the channel."""
+    global _live_suites_running
+    control = monitor_control.CONTROL_DIR
+    try:
+        root = WS.main_root if WS is not None else Path(os.environ.get("WORKER_HOST_ROOT") or CWD)
+        paths = {r: (root if r == "." else root / r) for r in SUITES}
+        paths = {r: p for r, p in paths.items() if p.is_dir()}
+        results = suites.run_many(SUITES, paths, "live")
+        suites.save_live_state(control, {
+            "day": time.strftime("%Y-%m-%d"), "at": _now_iso(),
+            "repos": {r.repo: {k: v for k, v in r.to_dict().items() if k != "tail"} for r in results}})
+        msg = suites.live_message(results, before)
+        if msg and LIVE_SUITES["channel"]:
+            scouts._notify(_api_url, LIVE_SUITES["channel"], msg[0], msg[1][:3500], "test-suites", msg[2])
+        elif msg:
+            log.warning("live test suites red, but test_suites_live.channel is not set: %s", msg[0])
+    except Exception:  # noqa: BLE001
+        log.exception("live test suites failed")
+    finally:
+        _live_suites_running = False
+
+
+def _live_suites_tick(bg: set) -> None:
+    global _live_suites_running
+    if not SUITES or _live_suites_running:
+        return
+    control = monitor_control.CONTROL_DIR
+    trigger = control / "suites" / "live.run"
+    before = suites.load_live_state(control)
+    if not trigger.exists() and not suites.live_due(before, LIVE_SUITES["hour"]):
+        return
+    trigger.unlink(missing_ok=True)
+    _live_suites_running = True
+    log.info("live test suites: %s", ", ".join(sorted(SUITES)))
+    bg.add(asyncio.create_task(asyncio.to_thread(_run_live_suites, before)))
 
 
 # ---- Concurrency state (module-global, accessed only from poll_loop) ------
@@ -1774,6 +1883,8 @@ async def poll_loop() -> None:
                 await asyncio.to_thread(_workspace_tick)
             except Exception:  # noqa: BLE001
                 log.exception("workspace tick failed")
+        if api_was_up:
+            _live_suites_tick(bg)
         if TEAM.get("scouts") and api_was_up:
             scouts.tick(TEAM, TEAM_DIR, monitor_control.CONTROL_DIR, PROJECT_LABEL, CWD,
                         os.environ.get("TASKS_API_URL", ""), bg)

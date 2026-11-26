@@ -44,7 +44,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 MAX_DIFF_CHARS = 400_000
 # Never committed from a worktree, whatever .gitignore says.
@@ -252,7 +252,7 @@ def write_state(lay: Layout, task_id: int, extra: Optional[dict] = None) -> dict
             old = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
-        for k in ("applied", "applied_at"):  # history survives later writes
+        for k in ("applied", "applied_at", "suites", "suites_baseline"):  # survive later writes
             if k in old and k not in st:
                 st[k] = old[k]
         path.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
@@ -306,11 +306,15 @@ def _onto(p: Path, base: str, env: Optional[dict] = None) -> None:
         raise err from None
 
 
-def apply(lay: Layout, task_id: int, env: Optional[dict] = None) -> list[str]:
+def apply(lay: Layout, task_id: int, env: Optional[dict] = None,
+          check: Optional[Callable[[list[tuple[str, Path]]], None]] = None) -> list[str]:
     """Bring the task's branch into the live checkout: rebase onto the live
     branch in the worktree, then fast-forward the live checkout. Raises
     GitError with a readable reason (conflict, would overwrite local changes)
-    before touching the live checkout of any repo if a rebase fails."""
+    before touching the live checkout of any repo if a rebase fails.
+
+    ``check([(repo, worktree), …])`` runs after the rebases, before the live
+    checkout moves (the test gate); it raises GitError to refuse."""
     b = branch(task_id)
     commit(lay, task_id, f"Task #{task_id}: letzte Änderungen vor dem Übernehmen", env)
     todo = []
@@ -323,9 +327,11 @@ def apply(lay: Layout, task_id: int, env: Optional[dict] = None) -> list[str]:
             _onto(p, base, env)
         except GitError as e:
             raise GitError(f"{name or '.'}: Konflikt mit dem aktuellen {base} — {e}") from None
-        todo.append((name, main, base))
+        todo.append((name, main, base, p))
+    if check and todo:
+        check([(name or ".", p) for name, _, _, p in todo])
     out = []
-    for name, main, base in todo:
+    for name, main, base, _ in todo:
         notes = _set_notes_aside(main)
         try:
             _git(main, "merge", "--ff-only", "--quiet", b, env=env)
@@ -347,7 +353,8 @@ def _gh(cwd: Path, *args: str, env: Optional[dict] = None, check: bool = True) -
     return r.stdout
 
 
-def publish_pr(lay: Layout, task_id: int, title: str, body: str, env: Optional[dict] = None) -> list[str]:
+def publish_pr(lay: Layout, task_id: int, title: str, body: str, env: Optional[dict] = None,
+               check: Optional[Callable[[list[tuple[str, Path]]], None]] = None) -> list[str]:
     """Push the task branch of every repo with commits and open a draft PR
     (or update the existing one). Rebases onto the remote base first, so the
     PR shows only the task's changes. Returns "repo → url" lines."""
@@ -364,6 +371,8 @@ def publish_pr(lay: Layout, task_id: int, title: str, body: str, env: Optional[d
             _onto(p, f"origin/{base}", env)
         except GitError as e:
             raise GitError(f"{name or '.'}: Konflikt mit origin/{base} — {e}") from None
+        if check:
+            check([(name or ".", p)])
         _git(p, "push", "--quiet", "--force-with-lease", "-u", "origin", f"{b}:{b}", env=env)
         url = _gh(p, "pr", "view", b, "--json", "url", "--jq", ".url", env=env, check=False).strip()
         if not url:

@@ -108,6 +108,17 @@ metric_files: []                # Rollen, deren Zahlen zusätzlich aus Dateien b
                                 # worker/evidence.py); ohne metric_gates nur angezeigt
 variant_penalty: {}             # Mehrfachtests: Schwellen steigen pro weiterer Variante
 
+test_suites:                    # ganze Test-Suiten, die der Worker selbst ausführt
+  backend:                      # Repo (Unterordner; "." = Root-Repo)
+    run: >-                     # {repo} = Host-Pfad des Repos, {name} = Containername,
+                                # {team} = Team-Ordner (z. B. für ein Hilfsskript)
+      docker run --rm --name {name} --memory 4g -v {repo}:/app:ro -w /app
+      backend:latest python -m pytest -q -p no:cacheprovider
+    timeout_min: 20
+test_suites_live:               # täglich auf dem Live-Stand
+  hour: 3
+  channel: myproject-tests      # rot -> Meldung hier (jeden Tag, bis es grün ist)
+
 scouts:
   - id: ideas                   # Schlüssel; Auftrag in scouts/ideas.md
     role: worker                # roles/worker.md ist die Persona
@@ -133,6 +144,29 @@ scouts:
     every_hours: 168
     channel: myproject-lead
 ```
+
+## Test-Suiten (`test_suites`)
+
+Ob die Tests grün sind, entscheidet Code, nicht der Agent (`worker/suites.py`,
+`worker/test_gate.py`). Immer die **ganze** Suite eines Repos — ein Test, der
+nicht läuft, kann nicht rot werden.
+
+1. **Start eines Tasks** (erste Umsetzungs-Stufe, nur die Repos, die der Task
+   nennt): Ist der Ausgangsstand rot, fragt die Stufe nach: mitreparieren
+   (dann muss der Task am Ende alles grün haben) oder anhalten.
+2. **Ende jeder Umsetzungs-Stufe** (Repos, die der Task geändert hat): Rot
+   macht aus `pass` ein `fail` mit dem Befund `TESTS-<repo>`, der Task geht
+   zur Reparatur zurück; dasselbe Repo zweimal hintereinander rot blockiert ihn.
+3. **„Übernehmen“** (nach dem Rebase auf den Live-Branch, bevor der
+   Live-Ordner sich bewegt): genau der Stand, der übernommen würde. Rot =
+   nichts übernommen. Ein Commit, der schon grün war, läuft nicht noch einmal.
+4. **Täglich auf dem Live-Stand** (`test_suites_live`): fängt auch Commits
+   außerhalb von Tasks. `<control>/suites/live.run` startet den Lauf sofort.
+
+Befehle laufen im Worker mit `bash -c`; über den Docker-Proxy brauchen
+Container ein `--memory`, Namen mit `{name}` (beginnt mit `task-`). Repo nur
+lesend einhängen (`:ro`) und Caches abschalten (`-p no:cacheprovider`,
+`PYTHONDONTWRITEBYTECODE=1`), damit der Lauf nichts im Repo hinterlässt.
 
 ## Rollen-Datei `roles/<id>.md`
 

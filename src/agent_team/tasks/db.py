@@ -1619,6 +1619,25 @@ def _finding_prefix(role: str) -> str:
     return (role or "F").upper().replace("-", "")[:4] or "F"
 
 
+def _suite_gate(res, evidence: Optional[dict]) -> None:
+    """Test suites the worker ran itself after an implement stage
+    (``worker/test_gate.py``): red turns pass into fail. Stable finding ids
+    per repo, so the same repo red twice in a row blocks the task."""
+    ev = (evidence or {}).get("suites")
+    if not isinstance(ev, dict) or ev.get("ok") is not False or res.verdict not in ("pass", "fail"):
+        return
+    red = [(str(k), v) for k, v in (ev.get("repos") or {}).items() if isinstance(v, dict) and not v.get("ok")]
+    res.verdict = "fail"
+    for repo, v in red:
+        failed = [str(t) for t in (v.get("failed") or [])][:10]
+        res.findings = list(res.findings) + [{
+            "id": f"TESTS-{repo}", "severity": "high", "resolved": False,
+            "text": (f"Test-Suite {repo} rot (vom Worker ausgeführt, ganze Suite): {v.get('summary') or 'rot'}"
+                     + (" — " + ", ".join(failed) if failed else "")),
+        }]
+    res.summary = (res.summary + " — Test-Suite rot: " + ", ".join(r for r, _ in red)).strip(" —")
+
+
 def complete_stage(task_id: int, seq: int, attempt: int, output: str,
                    evidence: Optional[dict] = None) -> Optional[dict]:
     """Worker finished a stage. Parses the result and applies the gates.
@@ -1677,6 +1696,7 @@ def complete_stage(task_id: int, seq: int, attempt: int, output: str,
                     for c in failed
                 ]
                 res.summary = (res.summary + " — Kennzahl-Prüfung: " + "; ".join(failed)).strip(" —")
+        _suite_gate(res, evidence)
         if res.metrics:
             src = (f" (aus {evidence['file']} gerechnet; Auditor: "
                    + ", ".join(f"{k}={v:g}" for k, v in agent_metrics.items()) + ")"

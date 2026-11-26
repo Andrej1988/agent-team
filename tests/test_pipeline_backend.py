@@ -866,3 +866,32 @@ def test_deploy_planned_before_the_review_moves_after_it(db):
                                   {"role": "paper-reviewer"}, {"role": "reviewer"}, {"role": "live-release"}])
     assert [s["role"] for s in paper] == ["implementation-engineer", "integration-ops", "paper-reviewer",
                                           "reviewer", "live-release"]
+
+
+def _red_suites(repo="demo-monitoring"):
+    return {"suites": {"ok": False, "report": "red",
+                       "repos": {repo: {"ok": False, "summary": "1 failed", "failed": ["t::x"]}}}}
+
+
+def test_red_test_suite_turns_an_implement_pass_into_fail_and_twice_blocks(db):
+    t, _ = make_pipeline(db, ["implementation-engineer", "reviewer"], max_rounds=5)
+    db.request_next_stage(t["id"])
+    r = db.complete_stage(t["id"], 1, 1, stage_text("pass", "done"), _red_suites())
+    st = _stages(db, t["id"])[1]
+    assert st["verdict"] == "fail" and "Test-Suite rot" in st["summary"]
+    assert any(f["id"] == "TESTS-demo-monitoring" and "t::x" in f["text"] for f in st["findings"])
+    assert r["status"] == "planning"          # back for a fix (re-plan)
+
+
+def test_green_or_missing_suites_leave_the_verdict(db):
+    t, _ = make_pipeline(db, ["implementation-engineer", "reviewer"])
+    db.request_next_stage(t["id"])
+    db.complete_stage(t["id"], 1, 1, stage_text("pass"), {"suites": {"ok": True, "repos": {}}})
+    assert _stages(db, t["id"])[1]["verdict"] == "pass"
+
+
+def test_needs_input_is_not_overridden_by_red_suites(db):
+    t, _ = make_pipeline(db, ["implementation-engineer"])
+    db.request_next_stage(t["id"])
+    r = db.complete_stage(t["id"], 1, 1, stage_text("needs_input", questions=["?"]), _red_suites())
+    assert r["status"] == "awaiting_input"
