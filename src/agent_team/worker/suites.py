@@ -23,7 +23,7 @@ Where they run:
 - **start of a task** (first implement stage, repos the task names): the
   starting point must be green. Red → the stage asks the user whether the
   task repairs it too or stops.
-- **end of every implement stage** (repos the task changed): red turns the
+- **end of the last implement stage** (repos the task changed): red turns the
   stage's verdict into ``fail`` (backend, ``tasks/db.complete_stage``), which
   sends the task back for a fix; the same repo red twice blocks it.
 - **"Übernehmen"** (after the rebase onto the live branch, before the live

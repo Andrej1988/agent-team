@@ -178,3 +178,16 @@ def test_write_state_keeps_suite_results(system):
     test_gate.save(system, 8, suites={"app": {"head": "h", "ok": True}}, suites_baseline={"ok": True})
     st = workspace.write_state(system, 8)
     assert st["suites"]["app"]["ok"] is True and st["suites_baseline"] == {"ok": True}
+
+
+def test_suites_run_after_the_last_implement_stage_only():
+    impl = {"engineer", "fixer"}.__contains__
+    stages = [{"seq": 1, "role": "engineer", "status": "running"},
+              {"seq": 2, "role": "engineer", "status": "pending"},
+              {"seq": 3, "role": "reviewer", "status": "pending"}]
+    assert not test_gate.last_implement(stages, 1, impl)
+    stages[0]["status"], stages[1]["status"] = "done", "running"
+    assert test_gate.last_implement(stages, 2, impl)          # only the reviewer is left
+    stages.append({"seq": 4, "role": "fixer", "status": "pending"})   # re-plan added a fix
+    assert not test_gate.last_implement(stages, 2, impl)
+    assert test_gate.last_implement(stages, 4, impl)

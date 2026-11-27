@@ -1178,7 +1178,7 @@ async def stage_one(task: dict, stage: dict) -> None:
         # Gate numbers from the raw backtest files, computed here by code
         # (the backend only uses them for roles with metric_files).
         ev = evidence.collect(Path(cwd), tid)
-        if isolated and role.kind == pipeline.KIND_IMPLEMENT and SUITES:
+        if isolated and role.kind == pipeline.KIND_IMPLEMENT and SUITES and _last_implement(t, seq):
             ev = {**ev, **_stage_suites(tid, seq, kind, role, stage, env)}
         return tasks_api.stage_complete(t, seq, attempt, section, ev)
 
@@ -1330,8 +1330,22 @@ def _uses_workspace(task: dict, stages: list[dict]) -> bool:
     return not any(s.get("status") in ("done", "failed", "skipped", "awaiting_input") for s in stages)
 
 
+def _last_implement(tid: int, seq: int) -> bool:
+    """Suites only after the last implement stage (fresh stage list: a
+    re-plan may have added stages while this one ran)."""
+    def is_impl(role_id: str) -> bool:
+        try:
+            return pipeline.load_role(role_id).kind == pipeline.KIND_IMPLEMENT
+        except Exception:  # noqa: BLE001 — unknown role: assume it changes code
+            return True
+    try:
+        return test_gate.last_implement(tasks_api.list_stages(tid), seq, is_impl)
+    except Exception:  # noqa: BLE001 — cannot tell: run them (never skip by mistake)
+        return True
+
+
 def _stage_suites(tid: int, seq: int, kind: str, role, stage: dict, env: dict) -> dict:
-    """End of an implement stage: commit, run the suites of the changed repos
+    """End of the last implement stage: commit, run the suites of the changed repos
     (evidence for the backend's gate, ``tasks/db.complete_stage``)."""
     goal = (stage.get("goal") or "").strip()[:1500]
     try:

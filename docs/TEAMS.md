@@ -154,9 +154,11 @@ nicht läuft, kann nicht rot werden.
 1. **Start eines Tasks** (erste Umsetzungs-Stufe, nur die Repos, die der Task
    nennt): Ist der Ausgangsstand rot, fragt die Stufe nach: mitreparieren
    (dann muss der Task am Ende alles grün haben) oder anhalten.
-2. **Ende jeder Umsetzungs-Stufe** (Repos, die der Task geändert hat): Rot
+2. **Ende der letzten Umsetzungs-Stufe** (Repos, die der Task geändert hat;
+   Zwischenstufen dürfen rot sein, die Suiten laufen einmal am Ende): Rot
    macht aus `pass` ein `fail` mit dem Befund `TESTS-<repo>`, der Task geht
-   zur Reparatur zurück; dasselbe Repo zweimal hintereinander rot blockiert ihn.
+   zur Reparatur zurück (die Reparatur-Stufe ist dann die neue letzte);
+   dasselbe Repo zweimal hintereinander rot blockiert ihn.
 3. **„Übernehmen“** (nach dem Rebase auf den Live-Branch, bevor der
    Live-Ordner sich bewegt): genau der Stand, der übernommen würde. Rot =
    nichts übernommen. Ein Commit, der schon grün war, läuft nicht noch einmal.

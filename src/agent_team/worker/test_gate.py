@@ -1,5 +1,5 @@
 """The task's test gates (``suites.py`` runs, this decides): starting point
-green, every implement stage green, "Übernehmen" only when green.
+green, the last implement stage green, "Übernehmen" only when green.
 
 Results live in the task's workspace state file (``suites_baseline``,
 ``suites``: repo -> {head, ok}) so "Übernehmen" can skip a suite whose
@@ -113,6 +113,14 @@ def _note(base: dict) -> str:
             "changed anything. The worker runs the whole suites after your stage; the stage only passes "
             "when they are green — repair these failures too (never weaken an assertion):\n\n"
             + str(base.get("report") or ""))
+
+
+def last_implement(stages: list[dict], seq: int, is_implement: Callable[[str], bool]) -> bool:
+    """True when no implement stage is still pending after ``seq``: the
+    suites run once at the end of the work, not after every intermediate
+    stage. A fix stage the re-plan adds after a red run is the new last one."""
+    return not any(int(s.get("seq") or 0) > seq and s.get("status") == "pending"
+                   and is_implement(str(s.get("role") or "")) for s in stages)
 
 
 def end_gate(lay: workspace.Layout, tid: int, cfg: dict[str, suites.Suite],
